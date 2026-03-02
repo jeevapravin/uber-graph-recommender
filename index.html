@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Routing & Driver Search</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+
+    <style>
+        html, body { height: 100%; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+        
+        /* Force Map to fill screen */
+        #map { height: 100vh !important; width: 100vw !important; background: #e5e5e5; }
+        
+        /* Floating UI Card */
+        #ui-panel {
+            position: absolute; top: 20px; left: 20px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); padding: 24px; border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15); width: 320px;
+            backdrop-filter: blur(10px);
+        }
+
+        h2 { margin: 0 0 4px 0; font-size: 22px; color: #111; }
+        p.subtitle { margin: 0 0 20px 0; font-size: 13px; color: #666; font-weight: 500; }
+        
+        .step { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #333; display: flex; align-items: center; }
+        .step span { font-size: 18px; margin-right: 8px; }
+
+        .slider-box { margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px; }
+        .slider-label { display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+        input[type=range] { width: 100%; accent-color: #000; cursor: pointer; }
+
+        .eta-display {
+            background: #111; color: #fff; padding: 20px; border-radius: 12px;
+            text-align: center; margin-top: 20px;
+        }
+        .eta-time { font-size: 36px; font-weight: 800; line-height: 1; }
+        .eta-time span { font-size: 18px; font-weight: 600; }
+        .eta-text { font-size: 12px; color: #aaa; margin-top: 4px; display: block; text-transform: uppercase; letter-spacing: 1px; }
+
+        /* --- BLINKING DRIVER DOT CSS --- */
+        .driver-dot {
+            width: 14px; height: 14px;
+            background-color: #000000;
+            border-radius: 50%;
+            border: 2px solid #ffffff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+            animation: pulse 1.2s infinite alternate;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.8); opacity: 0.6; box-shadow: 0 0 0 rgba(0,0,0,0); }
+            100% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 10px rgba(0,0,0,0.6); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <h2>AI Traffic Engine</h2>
+        <p class="subtitle">XGBoost Routing & H3 Spatial Search</p>
+        
+        <div class="step" id="step1"><span>🟢</span> 1. Click Map for Pickup</div>
+        <div class="step" id="step2" style="color:#aaa;"><span>🔴</span> 2. Click Map for Dropoff</div>
+        
+        <div class="slider-box">
+            <div class="slider-label">
+                <span>Simulation Time</span>
+                <span id="timeDisplay">12:00 PM</span>
+            </div>
+            <input type="range" id="timeSlider" min="0" max="23" value="12" oninput="updateTime(this.value)">
+        </div>
+
+        <div class="eta-display">
+            <div class="eta-time" id="etaValue">--<span>min</span></div>
+            <span class="eta-text" id="statusMsg">Awaiting Input</span>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        // Initialize Map
+        var map = L.map('map', {zoomControl: false}).setView([12.9352, 77.6245], 14);
+        L.control.zoom({position: 'topright'}).addTo(map);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap & CartoDB'
+        }).addTo(map);
+
+        let startCoords = null, endCoords = null;
+        let startMarker = null, endMarker = null, routePolyline = null;
+        let pickupHexPolygon = null, driverMarkers = [];
+
+        // Custom Icons
+        const startIcon = L.icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png', iconSize: [25, 41], iconAnchor: [12, 41] });
+        const endIcon = L.icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', iconSize: [25, 41], iconAnchor: [12, 41] });
+        
+        // The Blinking Dot Icon
+        const blinkingDriverIcon = L.divIcon({ className: 'driver-dot', iconSize: [14, 14], iconAnchor: [7, 7] });
+
+        // Update Slider UI
+        function updateTime(val) {
+            let h = parseInt(val);
+            document.getElementById('timeDisplay').innerText = `${h%12||12}:00 ${h>=12?'PM':'AM'}`;
+            if(startCoords && endCoords) fetchRoute(); // Auto-recalculate
+        }
+
+        // Spawn Drivers strictly inside the H3 Hexagon
+        function spawnDriversInHex(lat, lng) {
+            // 1. Identify the Hexagon using JS H3 Library (Resolution 9)
+            const hexId = h3.latLngToCell(lat, lng, 9);
+            const boundary = h3.cellToBoundary(hexId);
+            
+            // 2. Highlight the "Search Area" Hexagon in Green
+            pickupHexPolygon = L.polygon(boundary, {
+                color: '#05a357', weight: 2, fillOpacity: 0.15, dashArray: '5,5'
+            }).addTo(map);
+
+            // 3. Drop 4 blinking dots randomly INSIDE that hexagon boundary
+            for (let i = 0; i < 4; i++) {
+                // Grab a random corner of the hexagon and offset it slightly towards the center
+                let randomCorner = boundary[Math.floor(Math.random() * boundary.length)];
+                let driverLat = randomCorner[0] + (lat - randomCorner[0]) * Math.random() * 0.8;
+                let driverLng = randomCorner[1] + (lng - randomCorner[1]) * Math.random() * 0.8;
+                
+                let driver = L.marker([driverLat, driverLng], {icon: blinkingDriverIcon}).addTo(map);
+                driverMarkers.push(driver);
+            }
+        }
+
+        function clearMap() {
+            if(startMarker) map.removeLayer(startMarker);
+            if(endMarker) map.removeLayer(endMarker);
+            if(routePolyline) map.removeLayer(routePolyline);
+            
+            driverMarkers.forEach(m => map.removeLayer(m)); 
+            driverMarkers = [];
+            
+            if (pickupHexPolygon) {
+                map.removeLayer(pickupHexPolygon);
+                pickupHexPolygon = null;
+            }
+            
+            document.getElementById('etaValue').innerHTML = `--<span>min</span>`;
+            document.getElementById('statusMsg').innerText = "Searching area...";
+        }
+
+        // Handle Map Clicks
+        map.on('click', function(e) {
+            if (!startCoords || (startCoords && endCoords)) {
+                // FIRST CLICK: Set Pickup & Find Drivers
+                clearMap();
+                startCoords = [e.latlng.lat, e.latlng.lng];
+                endCoords = null;
+                
+                startMarker = L.marker(startCoords, {icon: startIcon}).addTo(map);
+                spawnDriversInHex(e.latlng.lat, e.latlng.lng);
+                
+                document.getElementById('step1').style.color = '#aaa';
+                document.getElementById('step2').style.color = '#333';
+                document.getElementById('statusMsg').innerText = "Nearby Drivers Found";
+            } else {
+                // SECOND CLICK: Set Dropoff & Route
+                endCoords = [e.latlng.lat, e.latlng.lng];
+                endMarker = L.marker(endCoords, {icon: endIcon}).addTo(map);
+                
+                document.getElementById('step2').style.color = '#aaa';
+                document.getElementById('step1').style.color = '#333';
+                fetchRoute();
+            }
+        });
+
+        // Talk to your Python FastAPI Backend
+        async function fetchRoute() {
+            document.getElementById('statusMsg').innerText = "Optimizing Route...";
+            const hour = parseInt(document.getElementById("timeSlider").value);
+
+            try {
+                const response = await fetch("http://127.0.0.1:8000/api/route", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ start_coords: startCoords, end_coords: endCoords, hour: hour })
+                });
+                
+                const data = await response.json();
+
+                if (data.status === "success") {
+                    document.getElementById('etaValue').innerHTML = `${data.eta_minutes}<span>min</span>`;
+                    document.getElementById('statusMsg').innerText = "AI Route Calculated";
+                    
+                    if(routePolyline) map.removeLayer(routePolyline);
+
+                    // Note: We are ignoring the data.route_hexes sent by the backend now 
+                    // so we only see the single pickup hexagon!
+
+                    // Draw the black road path
+                    routePolyline = L.polyline(data.route_coords, {color: '#000', weight: 5}).addTo(map);
+                    map.fitBounds(routePolyline.getBounds(), {padding: [50, 50]});
+                } else {
+                    document.getElementById('statusMsg').innerText = "Routing Error!";
+                    console.error(data.message);
+                }
+            } catch (err) {
+                document.getElementById('statusMsg').innerText = "Backend Connection Failed";
+                console.error(err);
+            }
+        }
+        
+        // Ensure map renders correctly on load
+        setTimeout(() => map.invalidateSize(), 500);
+    </script>
+</body>
+</html>

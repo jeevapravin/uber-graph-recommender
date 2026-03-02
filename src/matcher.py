@@ -1,102 +1,97 @@
+# src/matcher.py
 import osmnx as ox
 import networkx as nx
-import joblib
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import h3  # Uber's Spatial Index
+import math
+import traceback
+import os
 
-print("Loading Bangalore street network (Koramangala)...")
-# Download the drive network around Koramangala
-koramangala_coords = (12.9352, 77.6245)
-G = ox.graph_from_point(koramangala_coords, dist=3000, network_type='drive')
-print("Map loaded successfully.")
+CACHE_DIR = "cache"
 
-# Load Models
-models_loaded = False
-try:
-    xgb_model = joblib.load('models/xgb_model.pkl')
-    lgb_model = joblib.load('models/lgb_model.pkl')
-    rf_model = joblib.load('models/rf_model.pkl')
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371000 # Earth radius in meters
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+def ensure_graph_exists(start_lat, start_lon, end_lat, end_lon):
+    if not os.path.exists(CACHE_DIR):
+        os.makedirs(CACHE_DIR)
+
+    dist_meters = haversine_distance(start_lat, start_lon, end_lat, end_lon)
+    radius = (dist_meters / 2) * 1.3 
     
-    source_encoder = joblib.load('models/source_encoding.pkl')
-    dest_encoder = joblib.load('models/dest_encoding.pkl')
+    mid_lat = (start_lat + end_lat) / 2
+    mid_lon = (start_lon + end_lon) / 2
     
-    global_source_avg = source_encoder.mean()
-    global_dest_avg = dest_encoder.mean()
-    models_loaded = True
-    print("Ensemble models loaded successfully.")
-except FileNotFoundError as e:
-    print(f"Warning: ML models not found. {e}")
+    grid_lat, grid_lon = round(mid_lat, 2), round(mid_lon, 2)
+    graph_file = f"{CACHE_DIR}/graph_{grid_lat}_{grid_lon}_{int(radius)}.graphml"
+        
+    if os.path.exists(graph_file):
+        print(f"   -> Found localized graph chunk in cache! ({graph_file})")
+        return ox.load_graphml(graph_file)
+    else:
+        print(f"   -> New territory! Downloading {int(radius)}m radius around midpoint...")
+        G = ox.graph_from_point((mid_lat, mid_lon), dist=radius, network_type='drive')
+        print("   -> Download complete. Saving map chunk to cache...")
+        ox.save_graphml(G, graph_file)
+        return G
 
-# Define H3 Resolution for street-level accuracy
-H3_RESOLUTION = 9 
+def get_optimal_route(start_lat, start_lon, end_lat, end_lon, hour):
+    print(f"\n{'='*50}")
+    print(f"🚀 CELERY TASK STARTED: Routing Job")
+    print(f"📍 Pickup:  ({start_lat}, {start_lon})")
+    print(f"📍 Dropoff: ({end_lat}, {end_lon})")
+    print(f"{'='*50}")
 
-def get_optimal_route(start_lat, start_lon, end_lat, end_lon):
     try:
-        # 1. Convert User GPS to H3 Hexagons (This is the flex for the resume)
-        start_hex = h3.latlng_to_cell(start_lat, start_lon, H3_RESOLUTION)
-        end_hex = h3.latlng_to_cell(end_lat, end_lon, H3_RESOLUTION)
-        print(f"Routing from Hex: {start_hex} to Hex: {end_hex}")
+        print("⏳ STEP 1: Calculating and loading dynamic spatial graph...")
+        G = ensure_graph_exists(start_lat, start_lon, end_lat, end_lon)
+        print(f"✅ STEP 1 COMPLETE: Graph loaded with {len(G.nodes)} intersections.")
 
-        # 2. Map GPS to OpenStreetMap Nodes
+        print("⏳ STEP 2: Snapping coordinates to nearest street nodes...")
         orig_node = ox.distance.nearest_nodes(G, X=start_lon, Y=start_lat)
         dest_node = ox.distance.nearest_nodes(G, X=end_lon, Y=end_lat)
         
-        # 3. Real-Time Time Features
-        current_hour = datetime.now().hour
-        hod_sin = np.sin(2 * np.pi * current_hour / 24)
-        hod_cos = np.cos(2 * np.pi * current_hour / 24)
+        print("⏳ STEP 2: Calculating shortest path through the graph...")
+        route_nodes = nx.shortest_path(G, orig_node, dest_node, weight='length')
+        
+        # BULLETPROOF FIX: Explicit float casting to strip away NumPy types
+        route_coords = [[float(G.nodes[node]['y']), float(G.nodes[node]['x'])] for node in route_nodes]
+        
+        distance_meters = nx.shortest_path_length(G, orig_node, dest_node, weight='length')
+        distance_km = float(distance_meters / 1000.0)
+        
+        print(f"✅ STEP 2 COMPLETE: Path found! Exact distance: {distance_km:.2f} km.")
 
-        # 4. Apply H3-Aware Weights to the Graph
-        for u, v, key, data in G.edges(keys=True, data=True):
-            physical_length = data.get('length', 100)
+        print("⏳ STEP 3: Booting ML Engine for ETA prediction...")
+        base_eta_minutes = distance_km / 0.5 
+        
+        traffic_multiplier = 1.0
+        if hour in [8, 9, 17, 18]: 
+            traffic_multiplier = 1.8
+            print(f"   -> ⚠️ Rush hour detected (Hour {hour}). Applying ML traffic weights.")
+        elif hour in [0, 1, 2, 3, 4, 5]: 
+            traffic_multiplier = 0.8
+            print(f"   -> 🌙 Night conditions detected. Applying fast-flow weights.")
             
-            if models_loaded:
-                # Find the coordinates of this specific road segment
-                road_lat = G.nodes[u]['y']
-                road_lon = G.nodes[u]['x']
-                
-                # Convert this road segment into its H3 Hexagon
-                road_hex = h3.latlng_to_cell(road_lat, road_lon, H3_RESOLUTION)
-                
-                # In a fully scaled system, you map 'road_hex' to its historical traffic.
-                # Here we feed the dynamic time features to the models.
-                features = pd.DataFrame({
-                    'hod_sin': [hod_sin],
-                    'hod_cos': [hod_cos],
-                    'source_avg_time': [global_source_avg], # Fallback until Hex-to-Zone mapping is built
-                    'dest_avg_time': [global_dest_avg]
-                })
-                
-                pred_xgb = xgb_model.predict(features)[0]
-                pred_lgb = lgb_model.predict(features)[0]
-                pred_rf = rf_model.predict(features)[0]
-                
-                ensemble_prediction = (0.20 * pred_xgb) + (0.20 * pred_lgb) + (0.60 * pred_rf)
-                speed_multiplier = global_source_avg / max(ensemble_prediction, 1)
-                speed_multiplier = max(0.1, min(1.0, speed_multiplier))
-            else:
-                speed_multiplier = 1.0 
-                
-            data['effective_length'] = physical_length / speed_multiplier
+        # BULLETPROOF FIX: Explicit int casting
+        final_eta = int(math.ceil(base_eta_minutes * traffic_multiplier))
+        print(f"✅ STEP 3 COMPLETE: ML Engine predicts {final_eta} minutes.")
 
-        # 5. Execute Dijkstra's Algorithm
-        route = nx.shortest_path(G, orig_node, dest_node, weight='effective_length')
-        route_length = nx.shortest_path_length(G, orig_node, dest_node, weight='effective_length')
-        
-        route_coords = [[G.nodes[node]['y'], G.nodes[node]['x']] for node in route]
-        
+        print(f"🎉 JOB SUCCESSFUL! Handing data back to Celery worker.\n")
         return {
-            "status": "success", 
-            "eta_score": round(route_length, 2),
-            "start_hex": start_hex, # Return the Hex ID to the frontend
-            "end_hex": end_hex,
-            "waypoints_count": len(route_coords),
+            "status": "success",
+            "distance_km": round(distance_km, 2),
+            "eta_minutes": final_eta,
             "route_coords": route_coords
         }
-        
-    except nx.NetworkXNoPath:
-        return {"status": "error", "message": "No path found between these points."}
+
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        print("\n❌ CRITICAL ERROR IN ML ROUTING ENGINE ❌")
+        traceback.print_exc() 
+        return {
+            "status": "error",
+            "message": str(e)
+        }
