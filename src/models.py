@@ -5,9 +5,17 @@ from geoalchemy2 import Geometry
 from datetime import datetime
 import os
 
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 # Ensure you have your Supabase URL in your environment variables
 # Note: You MUST enable the PostGIS extension in your Supabase SQL editor: `CREATE EXTENSION postgis;`
-DATABASE_URL = "postgresql://postgres.rzrfdqsgmyyawmcbkntc:UberProj123@aws-1-ap-south-1.pooler.supabase.com:5432/postgres"
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

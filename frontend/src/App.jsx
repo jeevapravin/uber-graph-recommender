@@ -1,206 +1,37 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Polyline, Polygon, useMapEvents } from 'react-leaflet';
-import L from 'leaflet';
-import * as h3 from 'h3-js';
-import { Activity, Clock, Map as MapIcon, History, Settings as SettingsIcon, CarFront, User, CreditCard, Loader2, Moon, Sun, Bike, Car, ShieldCheck } from 'lucide-react';
+import { Activity, Map as MapIcon, History, Settings as SettingsIcon, CarFront, User, CreditCard, Moon, Sun } from 'lucide-react';
 
-// --- PRODUCTION ICONS ---
-const pickupIcon = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png', iconSize: [25, 41], iconAnchor: [12, 41] });
-const dropoffIcon = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', iconSize: [25, 41], iconAnchor: [12, 41] });
-const driverIcon = new L.divIcon({ className: 'bg-black dark:bg-white border-2 border-white dark:border-black rounded-full shadow-lg transition-all duration-500', iconSize: [14, 14], iconAnchor: [7, 7] });
+import { RideProvider } from './context/RideContext';
+import LocationSearch from './components/Ride/LocationSearch';
+import MapComponent from './components/Map/MapComponent';
+import RidePanel from './components/Ride/RidePanel';
 
-// --- VEHICLE PRICING ENGINE ---
-const VEHICLES = [
-  { id: 'moto', name: 'Uber Moto', icon: Bike, multiplier: 0.6, baseFare: 20, timeMultiplier: 0.8 },
-  { id: 'uberx', name: 'UberX', icon: Car, multiplier: 1.0, baseFare: 50, timeMultiplier: 1.0 },
-  { id: 'uberxl', name: 'UberXL', icon: ShieldCheck, multiplier: 1.5, baseFare: 80, timeMultiplier: 1.2 },
-];
-
-// --- PAGE 1: THE ASYNC MAP ENGINE ---
+// --- PAGE 1: THE REFACTORED ROUTING MAP ---
 const RoutingMap = ({ isDarkMode }) => {
-  const [pickup, setPickup] = useState(null);
-  const [dropoff, setDropoff] = useState(null);
-  const [time, setTime] = useState(12);
-  const [selectedVehicle, setSelectedVehicle] = useState(VEHICLES[1]); // Default UberX
-  
-  const [jobStatus, setJobStatus] = useState('IDLE');
-  const [activeRideId, setActiveRideId] = useState(null);
-  const [eta, setEta] = useState(null);
-  const [distance, setDistance] = useState(null);
-  const [route, setRoute] = useState([]);
-  
-  const [hexBoundary, setHexBoundary] = useState([]);
-  const [wsDrivers, setWsDrivers] = useState([]);
-  const ws = useRef(null);
-  const pollingInterval = useRef(null);
-
-  useEffect(() => {
-    ws.current = new WebSocket('ws://127.0.0.1:8000/ws/drivers');
-    ws.current.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === 'DRIVER_LOCATIONS') setWsDrivers(payload.data.map(d => [d.lat, d.lng]));
-      } catch (err) { }
-    };
-    return () => { if (ws.current) ws.current.close(); };
-  }, []);
-
-  const MapEvents = () => {
-    useMapEvents({
-      click(e) {
-        if (jobStatus === 'QUEUED' || jobStatus === 'PROCESSING') return;
-        if (!pickup || (pickup && dropoff)) {
-          setPickup([e.latlng.lat, e.latlng.lng]);
-          setDropoff(null); setRoute([]); setEta(null); setDistance(null); 
-          setJobStatus('IDLE'); setActiveRideId(null);
-          
-          // Generate H3 Resolution 9 Hexagon for Spatial Indexing
-          const hexId = h3.latLngToCell(e.latlng.lat, e.latlng.lng, 9);
-          setHexBoundary(h3.cellToBoundary(hexId));
-        } else if (!dropoff) {
-          setDropoff([e.latlng.lat, e.latlng.lng]);
-        }
-      }
-    });
-    return null;
-  };
-
-  useEffect(() => {
-    if (pickup && dropoff && jobStatus === 'IDLE') queueRouteJob();
-  }, [dropoff]);
-
-  const queueRouteJob = async () => {
-    setJobStatus('QUEUED');
-    try {
-      const response = await fetch('http://127.0.0.1:8000/api/route', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start_coords: pickup, end_coords: dropoff, hour: parseInt(time) })
-      });
-      const data = await response.json();
-      if (response.status === 202) {
-        setActiveRideId(data.ride_id);
-        setJobStatus('PROCESSING');
-        startPolling(data.ride_id);
-      } else throw new Error(data.detail);
-    } catch (error) { setJobStatus('FAILED'); }
-  };
-
-  const startPolling = (rideId) => {
-    if (pollingInterval.current) clearInterval(pollingInterval.current);
-    pollingInterval.current = setInterval(async () => {
-      try {
-        const res = await fetch(`http://127.0.0.1:8000/api/route/${rideId}`);
-        const data = await res.json();
-
-        if (data.status === 'completed') {
-          clearInterval(pollingInterval.current);
-          setEta(data.eta); setDistance(data.distance); setJobStatus('COMPLETED');
-          if (data.route_coords && data.route_coords.length > 0) setRoute(data.route_coords);
-          else setRoute([pickup, dropoff]); 
-        } else if (data.status === 'failed') {
-          clearInterval(pollingInterval.current); setJobStatus('FAILED');
-        }
-      } catch (err) { }
-    }, 2000);
-  };
-
-  const mapTileUrl = isDarkMode 
-    ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-    : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-
   return (
-    <div className="relative h-full w-full flex flex-col md:flex-row">
-      
-      {/* MAP LAYER */}
-      <div className="flex-1 relative z-0">
-        <MapContainer center={[12.9352, 77.6245]} zoom={14} zoomControl={false} className="w-full h-full">
-          <TileLayer url={mapTileUrl} />
-          <MapEvents />
-          {hexBoundary.length > 0 && <Polygon positions={hexBoundary} pathOptions={{ color: isDarkMode ? '#3b82f6' : '#22c55e', fillOpacity: 0.15, weight: 2, dashArray: '5,5' }} />}
-          {wsDrivers.map((pos, idx) => <Marker key={`ws-${idx}`} position={pos} icon={driverIcon} />)}
-          {pickup && <Marker position={pickup} icon={pickupIcon} />}
-          {dropoff && <Marker position={dropoff} icon={dropoffIcon} />}
-          {route.length > 0 && <Polyline positions={route} pathOptions={{ color: isDarkMode ? '#fff' : '#000', weight: 4, opacity: 0.8 }} />}
-        </MapContainer>
-      </div>
+    <RideProvider>
+      <div className="relative h-full w-full flex flex-col md:flex-row shadow-inner">
+        
+        {/* MAP LAYER */}
+        <div className="flex-1 h-screen relative z-0 md:w-[70%]">
+          <MapComponent isDarkMode={isDarkMode} />
+        </div>
 
-      {/* RIDE CONFIGURATION PANEL */}
-      <div className="w-full md:w-[400px] bg-white dark:bg-gray-900 shadow-2xl z-10 flex flex-col border-l border-gray-200 dark:border-gray-800 transition-colors">
-        <div className="p-6 flex-1 overflow-y-auto">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 tracking-tight">Request a Ride</h2>
+        {/* RIDE CONFIGURATION PANEL */}
+        <div className="w-full md:w-[30%] flex shrink-0 bg-white dark:bg-gray-900 shadow-2xl z-10 flex-col border-l border-gray-200 dark:border-gray-800 transition-colors h-screen">
+          <div className="p-6 pb-2 shrink-0">
+            <h2 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white tracking-tight">Request a Ride</h2>
+          </div>
           
-          <div className="space-y-4 mb-8 relative before:absolute before:inset-y-0 before:left-[11px] before:w-[2px] before:bg-gray-200 dark:before:bg-gray-800">
-            <div className={`flex items-center gap-4 text-sm font-semibold relative ${!pickup || (pickup && dropoff) ? 'text-gray-900 dark:text-white' : 'text-gray-400'}`}>
-              <div className="w-6 h-6 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] border-4 border-white dark:border-gray-900 z-10"></div> 
-              <span className="flex-1 pb-4 border-b border-gray-100 dark:border-gray-800">{pickup ? "Location Selected" : "Set Pickup Location"}</span>
-            </div>
-            <div className={`flex items-center gap-4 text-sm font-semibold relative ${pickup && !dropoff ? 'text-gray-900 dark:text-white' : 'text-gray-400'}`}>
-              <div className="w-6 h-6 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)] border-4 border-white dark:border-gray-900 z-10"></div> 
-              <span className="flex-1 pb-4 border-b border-gray-100 dark:border-gray-800">{dropoff ? "Destination Selected" : "Set Dropoff"}</span>
-            </div>
+          <LocationSearch />
+          
+          <div className="flex-1 overflow-y-auto mt-2 border-t border-gray-100 dark:border-gray-800/50 pt-2">
+            <RidePanel />
           </div>
-
-          <div className="mb-8">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-sm font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2"><Clock className="w-4 h-4"/> Departure Time</span>
-              <span className="text-sm font-bold text-gray-900 dark:text-white bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded-full">
-                {time % 12 || 12}:00 {time >= 12 ? 'PM' : 'AM'}
-              </span>
-            </div>
-            <input type="range" min="0" max="23" value={time} onChange={(e) => setTime(e.target.value)} disabled={jobStatus === 'QUEUED' || jobStatus === 'PROCESSING'} className="w-full accent-black dark:accent-white cursor-pointer" />
-          </div>
-
-          {/* VEHICLE SELECTOR */}
-          <div className="space-y-3 mb-8">
-            <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Available Rides</h3>
-            {VEHICLES.map((v) => (
-              <button 
-                key={v.id}
-                onClick={() => setSelectedVehicle(v)}
-                className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${selectedVehicle.id === v.id ? 'border-black dark:border-white bg-gray-50 dark:bg-gray-800' : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'}`}
-              >
-                <div className="flex items-center gap-4">
-                  <v.icon className={`w-8 h-8 ${selectedVehicle.id === v.id ? 'text-black dark:text-white' : 'text-gray-400'}`} />
-                  <div className="text-left">
-                    <div className={`font-bold ${selectedVehicle.id === v.id ? 'text-black dark:text-white' : 'text-gray-600 dark:text-gray-400'}`}>{v.name}</div>
-                    <div className="text-xs text-gray-500">
-                      {eta ? `${Math.ceil(eta * v.timeMultiplier)} mins away` : 'Select route for ETA'}
-                    </div>
-                  </div>
-                </div>
-                <div className="font-extrabold text-lg text-gray-900 dark:text-white">
-                  {distance ? `₹${Math.round(v.baseFare + (distance * 15 * v.multiplier))}` : '--'}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* STATUS & ACTION FOOTER */}
-        <div className="p-6 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-800">
-           {(jobStatus === 'QUEUED' || jobStatus === 'PROCESSING') ? (
-             <button disabled className="w-full py-4 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 font-bold flex items-center justify-center gap-2">
-               <Loader2 className="w-5 h-5 animate-spin" /> Calculating Route...
-             </button>
-           ) : jobStatus === 'COMPLETED' ? (
-             <button className="w-full py-4 rounded-xl bg-black dark:bg-white text-white dark:text-black font-bold text-lg shadow-xl hover:scale-[1.02] transition-transform">
-               Confirm {selectedVehicle.name}
-             </button>
-           ) : (
-             <button disabled className="w-full py-4 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-400 font-bold">
-               Select Pickup & Dropoff
-             </button>
-           )}
-           {distance && (
-             <div className="mt-4 text-center text-xs text-gray-500 font-medium">
-               {distance.toFixed(2)} km exact PostGIS distance
-             </div>
-           )}
         </div>
       </div>
-    </div>
+    </RideProvider>
   );
 };
 
