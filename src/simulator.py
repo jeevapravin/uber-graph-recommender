@@ -1,42 +1,49 @@
-import requests
-import time
+import random
+import h3
+from datetime import datetime
+from sqlalchemy.orm import Session
+from src.models import SessionLocal, Driver, engine
 
-URL = "http://127.0.0.1:8000/api/route"
+def generate_h3_index(lat, lng, resolution=9):
+    if hasattr(h3, 'geo_to_h3'):
+        return h3.geo_to_h3(lat, lng, resolution)
+    elif hasattr(h3, 'latlng_to_cell'):
+        return h3.latlng_to_cell(lat, lng, resolution)
+    else:
+        raise AttributeError("h3 module does not have a recognized latlng to h3 function")
 
-trips = [
-    {
-        "name": "Trip 1: Forum Mall to Sony World Signal",
-        "payload": {
-            "start_coords": [12.9345, 77.6112],
-            "end_coords": [12.9421, 77.6256]
-        }
-    },
-    {
-        "name": "Trip 2: Wipro Park to JNC",
-        "payload": {
-            "start_coords": [12.9312, 77.6289],
-            "end_coords": [12.9348, 77.6165]
-        }
-    }
-]
+def seed_drivers():
+    print("Dropping existing drivers table and recreating for fresh H3 seeding...")
+    Driver.__table__.drop(engine, checkfirst=True)
+    Driver.__table__.create(engine, checkfirst=True)
 
-print("Starting FastAPI simulation tests...\n")
-
-for trip in trips:
-    print(f"Requesting {trip['name']}...")
-    try:
-        response = requests.post(URL, json=trip['payload'])
-        
-        if response.status_code == 200:
-            data = response.json()
-            print("SUCCESS: Route calculated.")
-            print(f"ETA Score: {data['eta_score']}")
-            print(f"Total Waypoints: {data['waypoints_count']}\n")
-        else:
-            print(f"FAILED: Server returned {response.status_code}")
-            print(f"Error Details: {response.text}\n")
-            
-    except requests.exceptions.ConnectionError:
-        print("ERROR: Could not connect. Is app.py running on port 8000?\n")
+    db: Session = SessionLocal()
     
-    time.sleep(1)
+    # Bangalore bounding box approx
+    vehicle_types = ['UberX', 'Moto', 'UberXL']
+    drivers_to_insert = []
+    
+    for i in range(1000):
+        lat = random.uniform(12.85, 13.05)
+        lng = random.uniform(77.50, 77.75)
+        v_type = random.choice(vehicle_types)
+        
+        h3_hex = generate_h3_index(lat, lng, resolution=9)
+        
+        driver = Driver(
+            name=f"Driver_{i}",
+            vehicle_type=v_type,
+            status="available",
+            location=f"POINT({lng} {lat})", # WKT string format Longitude Latitude
+            h3_index=h3_hex,
+            last_updated=datetime.utcnow()
+        )
+        drivers_to_insert.append(driver)
+        
+    db.add_all(drivers_to_insert)
+    db.commit()
+    print(f"✅ Successfully seeded {len(drivers_to_insert)} drivers into the PostgreSQL Database via SQLAlchemy!")
+    db.close()
+
+if __name__ == "__main__":
+    seed_drivers()

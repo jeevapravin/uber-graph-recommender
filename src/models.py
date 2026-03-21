@@ -1,5 +1,5 @@
 # src/models.py
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Enum
 from sqlalchemy.orm import declarative_base, sessionmaker
 from geoalchemy2 import Geometry
 from datetime import datetime
@@ -26,9 +26,11 @@ class Driver(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
-    status = Column(String, default="available") # available, busy, offline
+    vehicle_type = Column(Enum('UberX', 'Moto', 'UberXL', name='vehicle_types'), default='UberX')
+    status = Column(Enum('available', 'on_trip', name='driver_statuses'), default='available')
     # The game-changer: A spatial column with a GiST index
     location = Column(Geometry(geometry_type='POINT', srid=4326), index=True)
+    h3_index = Column(String, index=True)
     last_updated = Column(DateTime, default=datetime.utcnow)
 
 # src/models.py (Snippet to update)

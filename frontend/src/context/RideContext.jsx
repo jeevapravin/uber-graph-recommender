@@ -20,6 +20,9 @@ export function RideProvider({ children }) {
   const [eta, setEta] = useState(null);
   const [distance, setDistance] = useState(null);
   const [route, setRoute] = useState([]);
+  const [isEstimating, setIsEstimating] = useState(false);
+  const [dynamicPrices, setDynamicPrices] = useState(null);
+  const [nearbyDrivers, setNearbyDrivers] = useState([]);
 
   // Store the full address or place object for UI display
   const [pickupLocation, setPickupLocation] = useState(null);
@@ -35,6 +38,9 @@ export function RideProvider({ children }) {
     eta, setEta,
     distance, setDistance,
     route, setRoute,
+    isEstimating, setIsEstimating,
+    dynamicPrices, setDynamicPrices,
+    nearbyDrivers, setNearbyDrivers,
     pickupLocation, setPickupLocation,
     dropoffLocation, setDropoffLocation,
     VEHICLES,

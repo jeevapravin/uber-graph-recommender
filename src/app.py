@@ -13,6 +13,7 @@ from datetime import datetime
 # Local imports
 from src.models import SessionLocal, Ride
 from src.worker import process_ml_route
+from src.matcher import get_optimal_route
 
 app = FastAPI(title="Uber ETA Routing API - Production Grade", version="2.0")
 
@@ -62,6 +63,46 @@ async def request_route(request: RouteRequest, db: Session = Depends(get_db)):
         
     except Exception as e:
         db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+class EstimateRequest(BaseModel):
+    pickup: List[float]
+    dropoff: List[float]
+    hour: Optional[int] = 12
+    vehicle_type: Optional[str] = "uberx"
+
+@app.post("/api/estimate-ride", status_code=200)
+async def estimate_ride(request: EstimateRequest):
+    try:
+        start_lat, start_lon = request.pickup
+        end_lat, end_lon = request.dropoff
+        
+        # Execute OSM routing and ML calculations
+        result = get_optimal_route(start_lat, start_lon, end_lat, end_lon, request.hour, request.vehicle_type)
+        
+        if result["status"] == "error":
+            raise HTTPException(status_code=500, detail=result["message"])
+            
+        distance_km = result["distance_km"]
+        eta_minutes = result["eta_minutes"]
+        route_coords = result["route_coords"]
+        
+        # Calculate dynamic prices
+        prices = {
+            "moto": max(20, round(20 + distance_km * 15 * 0.6)),   # Base + Dist * Multiplier
+            "uberx": max(50, round(50 + distance_km * 15 * 1.0)),
+            "uberxl": max(80, round(80 + distance_km * 15 * 1.5))
+        }
+        
+        return {
+            "route_coordinates": route_coords,
+            "eta_minutes": eta_minutes,
+            "distance_km": distance_km,
+            "prices": prices,
+            "nearby_drivers": result.get("nearby_drivers", [])
+        }
+        
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/route/{ride_id}")

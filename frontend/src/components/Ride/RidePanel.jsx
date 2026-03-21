@@ -1,45 +1,66 @@
 import React, { useEffect } from 'react';
-import { Clock, Loader2 } from 'lucide-react';
+import { Clock, Loader2, Car, Bike, ShieldCheck } from 'lucide-react';
 import { useRide } from '../../context/RideContext';
-
-// Haversine formula to calculate straight-line distance in km
-function calculateDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Radius of the earth in km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2); 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-  const distance = R * c; // Distance in km
-  return distance;
-}
+import { estimateRide } from '../../services/api';
+import useDebounce from '../../hooks/useDebounce';
 
 export default function RidePanel() {
-  const { pickup, dropoff, time, setTime, selectedVehicle, setSelectedVehicle, jobStatus, distance, setDistance, eta, setEta, VEHICLES } = useRide();
+  const { 
+    pickup, dropoff, time, setTime, 
+    selectedVehicle, setSelectedVehicle, 
+    jobStatus, distance, setDistance, 
+    eta, setEta, route, setRoute,
+    isEstimating, setIsEstimating,
+    dynamicPrices, setDynamicPrices,
+    nearbyDrivers, setNearbyDrivers,
+    VEHICLES 
+  } = useRide();
+
+  const debouncedTime = useDebounce(time, 500);
 
   useEffect(() => {
-    if (pickup && dropoff) {
-      const dist = calculateDistance(pickup[0], pickup[1], dropoff[0], dropoff[1]);
-      setDistance(dist);
-      // Dummy ETA: assume average speed of 30 km/h (0.5 km/min), so time = distance / 0.5 = distance * 2
-      setEta(dist * 2);
-    } else {
-      setDistance(null);
-      setEta(null);
-    }
-  }, [pickup, dropoff, setDistance, setEta]);
+    const fetchEstimate = async () => {
+      if (pickup && dropoff) {
+        setIsEstimating(true);
+        try {
+          const pickupCoords = [pickup[0], pickup[1]];
+          const dropoffCoords = [dropoff[0], dropoff[1]];
+          
+          const result = await estimateRide(pickupCoords, dropoffCoords, debouncedTime, selectedVehicle.id);
+          
+          setRoute(result.route_coordinates);
+          setEta(result.eta_minutes);
+          setDistance(result.distance_km);
+          setDynamicPrices(result.prices);
+          setNearbyDrivers(result.nearby_drivers || []);
+        } catch (error) {
+          console.error("Failed to estimate ride", error);
+        } finally {
+          setIsEstimating(false);
+        }
+      } else {
+        setDistance(null);
+        setEta(null);
+        setRoute([]);
+        setDynamicPrices(null);
+        setNearbyDrivers([]);
+      }
+    };
+
+    fetchEstimate();
+  }, [pickup, dropoff, debouncedTime, selectedVehicle.id, setDistance, setEta, setRoute, setIsEstimating, setDynamicPrices, setNearbyDrivers]);
 
   const handleConfirmRide = () => {
+    const activePrice = dynamicPrices ? dynamicPrices[selectedVehicle.id] : 0;
     const payload = {
       pickup,
       dropoff,
       time,
       vehicle: selectedVehicle.id,
       distance,
-      eta: eta * selectedVehicle.timeMultiplier,
-      price: Math.round(selectedVehicle.baseFare + (distance * 15 * selectedVehicle.multiplier))
+      eta,
+      route,
+      price: activePrice
     };
     console.log('--- CONFIRM RIDE PAYLOAD ---');
     console.log(JSON.stringify(payload, null, 2));
@@ -85,19 +106,32 @@ export default function RidePanel() {
             <button 
               key={v.id}
               onClick={() => setSelectedVehicle(v)}
-              className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${selectedVehicle.id === v.id ? 'border-black dark:border-white bg-gray-50 dark:bg-gray-800' : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'}`}
+              disabled={isEstimating}
+              className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all ${selectedVehicle.id === v.id ? 'border-black dark:border-white bg-gray-50 dark:bg-gray-800' : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'} ${isEstimating ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <div className="flex items-center gap-4">
                 <v.icon className={`w-8 h-8 ${selectedVehicle.id === v.id ? 'text-black dark:text-white' : 'text-gray-400'}`} />
                 <div className="text-left">
                   <div className={`font-bold ${selectedVehicle.id === v.id ? 'text-black dark:text-white' : 'text-gray-600 dark:text-gray-400'}`}>{v.name}</div>
                   <div className="text-xs text-gray-500">
-                    {eta ? `${Math.ceil(eta * v.timeMultiplier)} mins away` : 'Select route for ETA'}
+                    {isEstimating ? (
+                      <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Calculating...</span>
+                    ) : eta ? (
+                      `${eta} mins away`
+                    ) : (
+                      'Select route for ETA'
+                    )}
                   </div>
                 </div>
               </div>
               <div className="font-extrabold text-lg text-gray-900 dark:text-white">
-                {distance ? `₹${Math.round(v.baseFare + (distance * 15 * v.multiplier))}` : '--'}
+                {isEstimating ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : dynamicPrices && dynamicPrices[v.id] ? (
+                  `₹${dynamicPrices[v.id]}`
+                ) : (
+                  '--'
+                )}
               </div>
             </button>
           ))}
@@ -106,14 +140,15 @@ export default function RidePanel() {
 
       {/* STATUS & ACTION FOOTER */}
       <div className="p-6 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-800">
-        {(jobStatus === 'QUEUED' || jobStatus === 'PROCESSING') ? (
+        {(jobStatus === 'QUEUED' || jobStatus === 'PROCESSING' || isEstimating) ? (
           <button disabled className="w-full py-4 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 font-bold flex items-center justify-center gap-2">
-            <Loader2 className="w-5 h-5 animate-spin" /> Calculating Route...
+            <Loader2 className="w-5 h-5 animate-spin" /> {isEstimating ? 'Finding Best Route...' : 'Processing...'}
           </button>
         ) : (
           <button 
             onClick={handleConfirmRide}
-            className="w-full py-4 rounded-xl bg-black dark:bg-white text-white dark:text-black font-bold text-lg shadow-xl hover:scale-[1.02] transition-transform"
+            disabled={!route || route.length === 0}
+            className={`w-full py-4 rounded-xl bg-black dark:bg-white text-white dark:text-black font-bold text-lg shadow-xl hover:scale-[1.02] transition-transform ${(!route || route.length === 0) ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             Confirm {selectedVehicle.name}
           </button>

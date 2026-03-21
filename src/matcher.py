@@ -4,6 +4,10 @@ import networkx as nx
 import math
 import traceback
 import os
+import h3
+from sqlalchemy.orm import Session
+from src.models import SessionLocal, Driver
+from sqlalchemy import func
 
 CACHE_DIR = "cache"
 
@@ -38,11 +42,47 @@ def ensure_graph_exists(start_lat, start_lon, end_lat, end_lon):
         ox.save_graphml(G, graph_file)
         return G
 
-def get_optimal_route(start_lat, start_lon, end_lat, end_lon, hour):
+def get_real_nearby_drivers(lat, lng, vehicle_type):
+    v_map = {'moto': 'Moto', 'uberx': 'UberX', 'uberxl': 'UberXL'}
+    normalized_type = v_map.get(str(vehicle_type).lower(), 'UberX')
+    
+    if hasattr(h3, 'geo_to_h3'):
+        pickup_hex = h3.geo_to_h3(lat, lng, 9)
+        k_ring_hexes = list(h3.k_ring(pickup_hex, 2))
+    else:
+        pickup_hex = h3.latlng_to_cell(lat, lng, 9)
+        k_ring_hexes = list(h3.grid_disk(pickup_hex, 2))
+        
+    db: Session = SessionLocal()
+    
+    drivers_with_coords = db.query(
+        Driver.id, 
+        func.ST_Y(Driver.location).label('lat'), 
+        func.ST_X(Driver.location).label('lng'),
+        Driver.vehicle_type
+    ).filter(
+        Driver.h3_index.in_(k_ring_hexes),
+        Driver.status == 'available',
+        Driver.vehicle_type == normalized_type
+    ).limit(8).all()
+    
+    results = []
+    for d in drivers_with_coords:
+        results.append({
+            "id": f"driver_{d.id}",
+            "lat": float(d.lat),
+            "lng": float(d.lng),
+            "type": str(d.vehicle_type)
+        })
+    db.close()
+    return results
+
+def get_optimal_route(start_lat, start_lon, end_lat, end_lon, hour, vehicle_type="uberx"):
     print(f"\n{'='*50}")
     print(f"🚀 CELERY TASK STARTED: Routing Job")
     print(f"📍 Pickup:  ({start_lat}, {start_lon})")
     print(f"📍 Dropoff: ({end_lat}, {end_lon})")
+    print(f"🚗 Vehicle: {vehicle_type}")
     print(f"{'='*50}")
 
     try:
@@ -57,7 +97,6 @@ def get_optimal_route(start_lat, start_lon, end_lat, end_lon, hour):
         print("⏳ STEP 2: Calculating shortest path through the graph...")
         route_nodes = nx.shortest_path(G, orig_node, dest_node, weight='length')
         
-        # BULLETPROOF FIX: Explicit float casting to strip away NumPy types
         route_coords = [[float(G.nodes[node]['y']), float(G.nodes[node]['x'])] for node in route_nodes]
         
         distance_meters = nx.shortest_path_length(G, orig_node, dest_node, weight='length')
@@ -76,16 +115,21 @@ def get_optimal_route(start_lat, start_lon, end_lat, end_lon, hour):
             traffic_multiplier = 0.8
             print(f"   -> 🌙 Night conditions detected. Applying fast-flow weights.")
             
-        # BULLETPROOF FIX: Explicit int casting
         final_eta = int(math.ceil(base_eta_minutes * traffic_multiplier))
         print(f"✅ STEP 3 COMPLETE: ML Engine predicts {final_eta} minutes.")
+
+        # Real-time H3 Indexed DB Lookups for Driver Seeding matching engine
+        print("⏳ STEP 4: Querying PostgreSQL for H3 ring matchers...")
+        nearby_drivers = get_real_nearby_drivers(start_lat, start_lon, vehicle_type)
+        print(f"✅ STEP 4 COMPLETE: Found {len(nearby_drivers)} real nearby drivers mapping {vehicle_type} filters.")
 
         print(f"🎉 JOB SUCCESSFUL! Handing data back to Celery worker.\n")
         return {
             "status": "success",
             "distance_km": round(distance_km, 2),
             "eta_minutes": final_eta,
-            "route_coords": route_coords
+            "route_coords": route_coords,
+            "nearby_drivers": nearby_drivers
         }
 
     except Exception as e:
