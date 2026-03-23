@@ -1,9 +1,49 @@
+/* src/index.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Override Leaflet's hardcoded z-indexes ── */
+.leaflet-pane         { z-index: 1 !important; }
+.leaflet-top,
+.leaflet-bottom       { z-index: 100 !important; }
+.leaflet-control      { z-index: 100 !important; }
+
+/* ── Remove default Leaflet marker box ── */
+.leaflet-div-icon {
+  background: transparent !important;
+  border:     none        !important;
+}
+
+/* ── Scrollbar styling ── */
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: #0D0D14; }
+::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
+
+/* ── Smooth transitions globally ── */
+* {
+  -webkit-font-smoothing:  antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 
 html, body, #root {
   height: 100%;
   margin: 0;
   padding: 0;
+  background-color: #0D0D14;
+}
+
+/* ── Leaflet map full height ── */
+.leaflet-container {
+  height: 100%;
+  width:  100%;
+  background: #0D0D14;
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.85; }
+}
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s ease-in-out infinite;
 }

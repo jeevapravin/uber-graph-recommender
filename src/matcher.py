@@ -1,141 +1,181 @@
-# src/matcher.py
-import osmnx as ox
-import networkx as nx
-import math
-import traceback
-import os
+"""
+matcher.py — H3 Spatial Matching Engine
+
+Architecture:
+  1. Convert pickup (lat, lng) → H3 index at resolution 9
+  2. Get k_ring(center, radius) — a set of adjacent hexagons
+  3. Query drivers WHERE h3_index IN (...rings) AND is_available AND vehicle_type
+  4. Adaptive expansion: if 0 results at k=2, retry at k=3 (up to k=4)
+  5. Fetch OSRM route for fare estimation
+
+Why H3 over raw geo queries:
+  - PostGIS ST_DWithin still requires a geometry column + GiST index
+  - H3 string IN-query uses a plain B-Tree index → faster for our write-heavy use case
+  - H3 buckets equalize search area regardless of lat/lng distortion
+"""
+import asyncio
+import httpx
 import h3
-from sqlalchemy.orm import Session
-from src.models import SessionLocal, Driver
-from sqlalchemy import func
+from typing import List, Optional, Tuple
+from uuid import UUID
 
-CACHE_DIR = "cache"
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
 
-def haversine_distance(lat1, lon1, lat2, lon2):
-    R = 6371000 # Earth radius in meters
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+from database import get_db
+from models import Driver, VehicleType
+from schemas import MatchRequest, MatchResponse, DriverPublic, RouteInfo
+from auth import get_current_user, get_current_driver
+from config import get_settings
 
-def ensure_graph_exists(start_lat, start_lon, end_lat, end_lon):
-    if not os.path.exists(CACHE_DIR):
-        os.makedirs(CACHE_DIR)
+settings = get_settings()
+router = APIRouter(prefix="/match", tags=["Matching"])
 
-    dist_meters = haversine_distance(start_lat, start_lon, end_lat, end_lon)
-    radius = (dist_meters / 2) * 1.3 
-    
-    mid_lat = (start_lat + end_lat) / 2
-    mid_lon = (start_lon + end_lon) / 2
-    
-    grid_lat, grid_lon = round(mid_lat, 2), round(mid_lon, 2)
-    graph_file = f"{CACHE_DIR}/graph_{grid_lat}_{grid_lon}_{int(radius)}.graphml"
-        
-    if os.path.exists(graph_file):
-        print(f"   -> Found localized graph chunk in cache! ({graph_file})")
-        return ox.load_graphml(graph_file)
-    else:
-        print(f"   -> New territory! Downloading {int(radius)}m radius around midpoint...")
-        G = ox.graph_from_point((mid_lat, mid_lon), dist=radius, network_type='drive')
-        print("   -> Download complete. Saving map chunk to cache...")
-        ox.save_graphml(G, graph_file)
-        return G
+# ─────────────────────────── OSRM Route Fetch ───────────────────────────────
 
-def get_real_nearby_drivers(lat, lng, vehicle_type):
-    v_map = {'moto': 'Moto', 'uberx': 'UberX', 'uberxl': 'UberXL'}
-    normalized_type = v_map.get(str(vehicle_type).lower(), 'UberX')
-    
-    if hasattr(h3, 'geo_to_h3'):
-        pickup_hex = h3.geo_to_h3(lat, lng, 9)
-        k_ring_hexes = list(h3.k_ring(pickup_hex, 2))
-    else:
-        pickup_hex = h3.latlng_to_cell(lat, lng, 9)
-        k_ring_hexes = list(h3.grid_disk(pickup_hex, 2))
-        
-    db: Session = SessionLocal()
-    
-    drivers_with_coords = db.query(
-        Driver.id, 
-        func.ST_Y(Driver.location).label('lat'), 
-        func.ST_X(Driver.location).label('lng'),
-        Driver.vehicle_type
-    ).filter(
-        Driver.h3_index.in_(k_ring_hexes),
-        Driver.status == 'available',
-        Driver.vehicle_type == normalized_type
-    ).limit(8).all()
-    
-    results = []
-    for d in drivers_with_coords:
-        results.append({
-            "id": f"driver_{d.id}",
-            "lat": float(d.lat),
-            "lng": float(d.lng),
-            "type": str(d.vehicle_type)
-        })
-    db.close()
-    return results
-
-def get_optimal_route(start_lat, start_lon, end_lat, end_lon, hour, vehicle_type="uberx"):
-    print(f"\n{'='*50}")
-    print(f"🚀 CELERY TASK STARTED: Routing Job")
-    print(f"📍 Pickup:  ({start_lat}, {start_lon})")
-    print(f"📍 Dropoff: ({end_lat}, {end_lon})")
-    print(f"🚗 Vehicle: {vehicle_type}")
-    print(f"{'='*50}")
-
+async def fetch_osrm_route(
+    pickup: Tuple[float, float],
+    dropoff: Tuple[float, float],
+) -> Optional[RouteInfo]:
+    """
+    Hits the OSRM /route/v1/driving endpoint.
+    Returns encoded polyline, distance in km, duration in minutes.
+    Falls back to None on network error — never let routing block matching.
+    """
+    olat, olng = pickup
+    dlat, dlng = dropoff
+    url = (
+        f"{settings.OSRM_BASE_URL}/route/v1/driving/"
+        f"{olng},{olat};{dlng},{dlat}"
+        f"?overview=full&geometries=polyline&steps=false"
+    )
     try:
-        print("⏳ STEP 1: Calculating and loading dynamic spatial graph...")
-        G = ensure_graph_exists(start_lat, start_lon, end_lat, end_lon)
-        print(f"✅ STEP 1 COMPLETE: Graph loaded with {len(G.nodes)} intersections.")
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("code") != "Ok" or not data.get("routes"):
+                return None
+            route = data["routes"][0]
+            return RouteInfo(
+                polyline=route["geometry"],
+                distance_km=round(route["distance"] / 1000, 2),
+                duration_min=round(route["duration"] / 60, 2),
+            )
+    except Exception:
+        return None   # Non-blocking fallback
 
-        print("⏳ STEP 2: Snapping coordinates to nearest street nodes...")
-        orig_node = ox.distance.nearest_nodes(G, X=start_lon, Y=start_lat)
-        dest_node = ox.distance.nearest_nodes(G, X=end_lon, Y=end_lat)
-        
-        print("⏳ STEP 2: Calculating shortest path through the graph...")
-        route_nodes = nx.shortest_path(G, orig_node, dest_node, weight='length')
-        
-        route_coords = [[float(G.nodes[node]['y']), float(G.nodes[node]['x'])] for node in route_nodes]
-        
-        distance_meters = nx.shortest_path_length(G, orig_node, dest_node, weight='length')
-        distance_km = float(distance_meters / 1000.0)
-        
-        print(f"✅ STEP 2 COMPLETE: Path found! Exact distance: {distance_km:.2f} km.")
 
-        print("⏳ STEP 3: Booting ML Engine for ETA prediction...")
-        base_eta_minutes = distance_km / 0.5 
-        
-        traffic_multiplier = 1.0
-        if hour in [8, 9, 17, 18]: 
-            traffic_multiplier = 1.8
-            print(f"   -> ⚠️ Rush hour detected (Hour {hour}). Applying ML traffic weights.")
-        elif hour in [0, 1, 2, 3, 4, 5]: 
-            traffic_multiplier = 0.8
-            print(f"   -> 🌙 Night conditions detected. Applying fast-flow weights.")
-            
-        final_eta = int(math.ceil(base_eta_minutes * traffic_multiplier))
-        print(f"✅ STEP 3 COMPLETE: ML Engine predicts {final_eta} minutes.")
+# ─────────────────────────── Fare Calculation ───────────────────────────────
 
-        # Real-time H3 Indexed DB Lookups for Driver Seeding matching engine
-        print("⏳ STEP 4: Querying PostgreSQL for H3 ring matchers...")
-        nearby_drivers = get_real_nearby_drivers(start_lat, start_lon, vehicle_type)
-        print(f"✅ STEP 4 COMPLETE: Found {len(nearby_drivers)} real nearby drivers mapping {vehicle_type} filters.")
+def calculate_fare(
+    vehicle_type: VehicleType,
+    distance_km: float,
+    duration_min: float,
+    surge: float = 1.0,
+) -> float:
+    cfg = settings.FARE_BASE[vehicle_type.value]
+    raw = cfg["base"] + (cfg["per_km"] * distance_km) + (cfg["per_min"] * duration_min)
+    return round(raw * surge, 2)
 
-        print(f"🎉 JOB SUCCESSFUL! Handing data back to Celery worker.\n")
-        return {
-            "status": "success",
-            "distance_km": round(distance_km, 2),
-            "eta_minutes": final_eta,
-            "route_coords": route_coords,
-            "nearby_drivers": nearby_drivers
-        }
 
-    except Exception as e:
-        print("\n❌ CRITICAL ERROR IN ML ROUTING ENGINE ❌")
-        traceback.print_exc() 
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+# ─────────────────────────── Adaptive H3 Matching ───────────────────────────
+
+async def find_drivers_adaptive(
+    db: AsyncSession,
+    pickup_h3: str,
+    vehicle_type: VehicleType,
+    min_k: int = 2,
+    max_k: int = 4,
+    limit: int = 20,
+) -> Tuple[List[Driver], int]:
+    """
+    Adaptive ring expansion.
+    Tries k=min_k first. If empty, expands to k+1 up to max_k.
+    Returns (drivers, ring_used).
+    """
+    for k in range(min_k, max_k + 1):
+        # h3.grid_disk (formerly k_ring) — set of hex IDs within k rings
+        hex_ring: set = h3.grid_disk(pickup_h3, k)
+
+        result = await db.execute(
+            select(Driver).where(
+                and_(
+                    Driver.h3_index.in_(hex_ring),
+                    Driver.is_available == True,
+                    Driver.vehicle_type == vehicle_type,
+                    Driver.is_active == True,
+                )
+            ).order_by(Driver.rating.desc()).limit(limit)
+        )
+        drivers = result.scalars().all()
+
+        if drivers:
+            return drivers, k
+
+    return [], max_k
+
+
+# ─────────────────────────── Match Endpoint ─────────────────────────────────
+
+@router.post("/", response_model=MatchResponse)
+async def match_drivers(
+    payload: MatchRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    # 1. Convert pickup to H3 index at configured resolution
+    pickup_h3 = h3.latlng_to_cell(
+        payload.pickup_lat,
+        payload.pickup_lng,
+        settings.H3_RESOLUTION,
+    )
+
+    # 2. Run OSRM route fetch and driver spatial query concurrently
+    drivers_task = find_drivers_adaptive(
+        db, pickup_h3, payload.vehicle_type
+    )
+    route_task = fetch_osrm_route(
+        (payload.pickup_lat, payload.pickup_lng),
+        (payload.dropoff_lat, payload.dropoff_lng),
+    )
+
+    (drivers, rings_used), route = await asyncio.gather(drivers_task, route_task)
+
+    # 3. Fare estimation
+    fare = None
+    if route:
+        fare = calculate_fare(payload.vehicle_type, route.distance_km, route.duration_min)
+
+    return MatchResponse(
+        drivers=[DriverPublic.model_validate(d) for d in drivers],
+        pickup_h3=pickup_h3,
+        searched_rings=rings_used,
+        route=route,
+        estimated_fare=fare,
+    )
+
+
+# ─────────────────────────── Driver Location Update ─────────────────────────
+
+@router.patch("/driver/location", tags=["Driver"])
+async def update_driver_location(
+    lat: float,
+    lng: float,
+    db: AsyncSession = Depends(get_db),
+    driver=Depends(get_current_driver),
+):
+    """
+    Called by driver app every ~5 seconds.
+    Recalculates H3 index on each update — this is what keeps
+    the spatial index fresh. Without this, your whole H3 system is a lie.
+    """
+    from auth import get_current_driver  # avoid circular at module level
+
+    new_h3 = h3.latlng_to_cell(lat, lng, settings.H3_RESOLUTION)
+    driver.lat      = lat
+    driver.lng      = lng
+    driver.h3_index = new_h3
+    await db.commit()
+    return {"h3_index": new_h3}

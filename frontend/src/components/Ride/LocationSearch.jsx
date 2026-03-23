@@ -1,120 +1,116 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { MapPin, Navigation } from 'lucide-react';
-import { useRide } from '../../context/RideContext';
-import { useGeocoding } from '../../hooks/useGeocoding';
+// src/components/Ride/LocationSearch.jsx
+// Uses OpenStreetMap Nominatim for free geocoding.
+// Debounced at 400ms — do NOT hit their API on every keystroke, you'll get rate-limited.
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-export default function LocationSearch() {
-  const { setPickup, setDropoff, pickupLocation, setPickupLocation, dropoffLocation, setDropoffLocation } = useRide();
-  const [activeInput, setActiveInput] = useState(null); // 'pickup' or 'dropoff'
-  const [query, setQuery] = useState('');
-  
-  const { suggestions, isLoading, search, clearSuggestions } = useGeocoding(300);
-  const wrapperRef = useRef(null);
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+
+function useDebounce(value, delay) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
+async function geocode(query) {
+  if (!query || query.length < 3) return [];
+  const params = new URLSearchParams({
+    q:               query + ', Bangalore, India',
+    format:          'json',
+    limit:           5,
+    addressdetails:  1,
+    countrycodes:    'in',
+  });
+  const res = await fetch(`${NOMINATIM_URL}?${params}`, {
+    headers: { 'Accept-Language': 'en' },
+  });
+  return res.json();
+}
+
+export default function LocationSearch({ label, value, onSelect, icon }) {
+  const [query,    setQuery]    = useState(value?.address || '');
+  const [results,  setResults]  = useState([]);
+  const [loading,  setLoading]  = useState(false);
+  const [open,     setOpen]     = useState(false);
+  const debouncedQuery = useDebounce(query, 400);
+  const containerRef   = useRef(null);
 
   useEffect(() => {
-    function handleClickOutside(event) {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
-        setActiveInput(null);
-        clearSuggestions();
+    if (!debouncedQuery || debouncedQuery === value?.address) {
+      setResults([]);
+      return;
+    }
+    setLoading(true);
+    geocode(debouncedQuery)
+      .then(setResults)
+      .catch(() => setResults([]))
+      .finally(() => setLoading(false));
+  }, [debouncedQuery]);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
       }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [clearSuggestions]);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
-  useEffect(() => {
-    if (activeInput) {
-      search(query);
-    }
-  }, [query, activeInput, search]);
-
-  const handleSelect = (place) => {
-    if (activeInput === 'pickup') {
-      setPickup([place.lat, place.lon]);
-      setPickupLocation(place);
-    } else {
-      setDropoff([place.lat, place.lon]);
-      setDropoffLocation(place);
-    }
-    setQuery('');
-    setActiveInput(null);
-    clearSuggestions();
-  };
-
-  const renderInput = (type, placeholder, icon, value, locationState) => {
-    const isActive = activeInput === type;
-    const displayValue = isActive ? query : (locationState ? locationState.displayName : '');
-
-    return (
-      <div className="relative flex items-center mb-3">
-        <div className="absolute left-3 text-gray-400">
-          {icon}
-        </div>
-        <input
-          type="text"
-          placeholder={placeholder}
-          value={displayValue}
-          onChange={(e) => {
-            if (!isActive) setActiveInput(type);
-            setQuery(e.target.value);
-            if (type === 'pickup' && !isActive) setPickupLocation(null);
-            if (type === 'dropoff' && !isActive) setDropoffLocation(null);
-          }}
-          onFocus={() => {
-            setActiveInput(type);
-            setQuery(locationState ? locationState.displayName : '');
-          }}
-          className={`w-full bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white rounded-xl py-3 pl-10 pr-4 outline-none focus:ring-2 focus:ring-black dark:focus:ring-white transition-all ${isActive ? 'ring-2 ring-black dark:ring-white bg-white dark:bg-gray-900 shadow-lg' : ''}`}
-        />
-        {locationState && !isActive && (
-          <button 
-            className="absolute right-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (type === 'pickup') { setPickupLocation(null); setPickup(null); }
-              else { setDropoffLocation(null); setDropoff(null); }
-            }}
-          >
-            ×
-          </button>
-        )}
-      </div>
-    );
-  };
+  const handleSelect = useCallback((result) => {
+    const address = result.display_name.split(',').slice(0, 3).join(',').trim();
+    setQuery(address);
+    setOpen(false);
+    setResults([]);
+    onSelect({
+      lat:     parseFloat(result.lat),
+      lng:     parseFloat(result.lon),
+      address: address,
+    });
+  }, [onSelect]);
 
   return (
-    <div className="relative z-50 p-4" ref={wrapperRef}>
-      <div className="relative before:absolute before:inset-y-0 before:left-[21px] before:w-[2px] before:bg-gray-200 dark:before:bg-gray-700 before:z-0 py-2">
-        <div className="relative z-10">
-          {renderInput('pickup', 'Pickup Location', <Navigation className="w-4 h-4 text-green-500" />, query, pickupLocation)}
-          {renderInput('dropoff', 'Dropoff Location', <MapPin className="w-4 h-4 text-red-500" />, query, dropoffLocation)}
-        </div>
-      </div>
+    <div ref={containerRef} className="relative w-full">
+      <label className="text-xs text-gray-400 uppercase tracking-wider mb-1.5 block">
+        {icon} {label}
+      </label>
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder={`Search ${label.toLowerCase()}...`}
+        className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5
+          text-gray-100 text-sm placeholder-gray-600 outline-none
+          focus:border-teal-400 focus:ring-1 focus:ring-teal-400/30 transition-all"
+      />
 
-      {/* Suggestions Dropdown */}
-      {activeInput && (query.length > 2 || suggestions.length > 0) && (
-        <div className="absolute left-4 right-4 mt-2 bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden z-50 max-h-64 overflow-y-auto">
-          {isLoading ? (
-            <div className="p-4 text-center text-gray-500 text-sm">Searching...</div>
-          ) : suggestions.length > 0 ? (
-            <ul>
-              {suggestions.map((place) => (
-                <li 
-                  key={place.id}
-                  onClick={() => handleSelect(place)}
-                  className="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer border-b border-gray-50 dark:border-gray-800/50 last:border-0 transition-colors flex items-start gap-3"
-                >
-                  <MapPin className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
-                  <div className="overflow-hidden">
-                    <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{place.address?.name || place.displayName.split(',')[0]}</p>
-                    <p className="text-xs text-gray-500 truncate">{place.displayName}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : query.length > 2 ? (
-            <div className="p-4 text-center text-gray-500 text-sm">No results found</div>
-          ) : null}
+      {/* Dropdown */}
+      {open && (results.length > 0 || loading) && (
+        <div className="absolute top-full mt-1 left-0 right-0 z-[9999]
+          bg-gray-900 border border-gray-700 rounded-xl overflow-hidden shadow-2xl">
+          {loading && (
+            <div className="px-4 py-3 text-xs text-gray-500 flex items-center gap-2">
+              <span className="animate-spin">⟳</span> Searching...
+            </div>
+          )}
+          {results.map((r) => {
+            const parts = r.display_name.split(',');
+            return (
+              <button
+                key={r.place_id}
+                onClick={() => handleSelect(r)}
+                className="w-full text-left px-4 py-3 hover:bg-gray-800 transition-colors
+                  border-b border-gray-800 last:border-0"
+              >
+                <p className="text-sm text-gray-200 truncate">{parts.slice(0, 2).join(',')}</p>
+                <p className="text-xs text-gray-500 truncate mt-0.5">{parts.slice(2, 4).join(',')}</p>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

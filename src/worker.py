@@ -1,8 +1,9 @@
 # src/worker.py
 from celery import Celery
 import time
-from src.matcher import get_optimal_route
-from src.models import SessionLocal, Ride
+from src.ml_engine import get_optimal_route
+from src.database import SessionLocal
+from src.models import Ride
 
 # Initialize Celery pointing to Docker Redis
 celery_app = Celery(
@@ -31,7 +32,8 @@ def process_ml_route(self, ride_id: int, start_lat: float, start_lon: float, end
             coords = result.get("route_coords", [])
             if coords:
                 # PostGIS requires WKT Format: LINESTRING(lon lat, lon lat)
-                wkt_coords = ", ".join([f"{lon} {lat}" for lat, lon in coords])
+                # ml_engine returns OSRM GeoJSON coords as [lon, lat]
+                wkt_coords = ", ".join([f"{lon} {lat}" for lon, lat in coords])
                 ride.route_geometry = f"LINESTRING({wkt_coords})"
             
             ride.status = "completed"
