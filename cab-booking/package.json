@@ -1,0 +1,15 @@
+{
+  "name": "cab-booking",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Online Cab Booking System: Node.js (node:http) + MySQL + vanilla HTML/CSS/JS",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "mysql2": "^3.11.0"
+  }
+}
