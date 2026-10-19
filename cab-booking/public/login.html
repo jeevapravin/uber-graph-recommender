@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="auth-box stack">
+      <section class="card">
+        <h1>Log in</h1>
+        <p class="muted">Passengers, drivers and administrators all log in here.</p>
+        <form class="form" id="login" novalidate>
+          <label class="field">Email <input name="email" type="email" required autocomplete="email" maxlength="150"></label>
+          <label class="field">Password <input name="password" type="password" required minlength="6" autocomplete="current-password"></label>
+          <p class="form-error" role="alert"></p>
+          <button class="btn primary" type="submit">Log in</button>
+          <p class="muted" style="margin:0">New here? <a href="/register.html">Create an account</a></p>
+        </form>
+      </section>
+      <section class="card">
+        <h3>Demo accounts</h3>
+        <div class="demo-logins" id="demos"></div>
+      </section>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      await CAB.page();
+      const f = CAB.$('#login');
+      if (CAB.session.user) location.href = CAB.HOME[CAB.session.user.role];
+      CAB.form(f, async (data) => {
+        const r = await CAB.api('/api/auth/login', { method: 'POST', body: data });
+        CAB.session.save(r.token, r.user);
+        const next = new URLSearchParams(location.search).get('next');
+        location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : CAB.HOME[r.user.role];
+      });
+      const demos = [
+        ['Passenger', 'priya@example.com', 'Pass@123'],
+        ['Driver (approved, sedan)', 'ravi@example.com', 'Driver@123'],
+        ['Driver (approved, auto)', 'arun@example.com', 'Driver@123'],
+        ['Admin (all permissions)', 'admin@cabgo.in', 'Admin@123'],
+        ['Admin (trips + passengers only)', 'support@cabgo.in', 'Support@123'],
+        ['Super Admin', 'superadmin@cabgo.in', 'Super@123'],
+      ];
+      CAB.$('#demos').append(...demos.map(([label, email, pw]) =>
+        CAB.h('button', { class: 'btn small ghost', type: 'button', onclick: () => { CAB.fill(f, { email, password: pw }); f.requestSubmit(); } },
+          CAB.h('b', {}, label), ' ', CAB.h('span', { class: 'muted mono' }, email))));
+    })();
+  </script>
+</body>
+</html>

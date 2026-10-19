@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign up · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <section class="card auth-box">
+      <h1>Create an account</h1>
+      <form class="form" id="reg" novalidate>
+        <div class="segmented" role="radiogroup" aria-label="Account type">
+          <label><input type="radio" name="role" value="PASSENGER" checked><span><b>PASSENGER</b><small>Book rides</small></span></label>
+          <label><input type="radio" name="role" value="DRIVER"><span><b>DRIVER</b><small>Drive and earn</small></span></label>
+        </div>
+        <label class="field">Full name <input name="name" required minlength="2" maxlength="100" autocomplete="name"></label>
+        <div class="fields">
+          <label class="field">Email <input name="email" type="email" required maxlength="150" autocomplete="email"></label>
+          <label class="field">Mobile <small>10 digits</small><input name="mobile" required pattern="[0-9]{10}" inputmode="numeric" maxlength="10" autocomplete="tel"></label>
+        </div>
+        <div class="fields">
+          <label class="field">Password <small>min 6 characters</small><input name="password" type="password" required minlength="6" maxlength="100" autocomplete="new-password"></label>
+          <label class="field">Confirm password <input name="confirm" type="password" required minlength="6" autocomplete="new-password"></label>
+        </div>
+        <div id="passengerFields" class="fields">
+          <label class="field">Home address <small>optional</small><input name="default_address" maxlength="255"></label>
+          <label class="field">Emergency contact <small>optional, 10 digits</small><input name="emergency_contact" pattern="[0-9]{10}" inputmode="numeric" maxlength="10"></label>
+        </div>
+        <div id="driverFields" class="fields" hidden>
+          <label class="field">Driving licence no. <input name="license_no" minlength="5" maxlength="30"></label>
+          <label class="field">Licence expiry <input name="license_expiry" type="date"></label>
+        </div>
+        <p class="form-error" role="alert"></p>
+        <button class="btn primary" type="submit">Sign up</button>
+        <p class="muted" style="margin:0">Have an account? <a href="/login.html">Log in</a></p>
+      </form>
+    </section>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      await CAB.page();
+      const f = CAB.$('#reg');
+      const today = new Date().toISOString().slice(0, 10);
+      f.elements.license_expiry.min = today;
+      const sync = () => {
+        const driver = f.elements.role.value === 'DRIVER';
+        CAB.$('#driverFields').hidden = !driver;
+        CAB.$('#passengerFields').hidden = driver;
+        f.elements.license_no.required = driver;
+        f.elements.license_expiry.required = driver;
+      };
+      f.addEventListener('change', sync);
+      sync();
+      f.elements.confirm.addEventListener('input', (e) => e.target.setCustomValidity(e.target.value === f.elements.password.value ? '' : 'Passwords do not match'));
+      CAB.form(f, async (data) => {
+        if (data.password !== data.confirm) throw new Error('Passwords do not match');
+        const r = await CAB.api('/api/auth/register', { method: 'POST', body: data });
+        CAB.toast(r.message, 'ok');
+        const login = await CAB.api('/api/auth/login', { method: 'POST', body: { email: data.email, password: data.password } });
+        CAB.session.save(login.token, login.user);
+        setTimeout(() => (location.href = CAB.HOME[login.user.role]), 900);
+      });
+    })();
+  </script>
+</body>
+</html>
