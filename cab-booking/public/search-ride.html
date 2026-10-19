@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search rides · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/figures/iso.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Search rides</h1><p class="muted">See every vehicle type, the estimated fare and how many drivers are free right now.</p></div></div>
+    <div class="split">
+      <section class="card">
+        <form class="form" id="search">
+          <div class="fields">
+            <label class="field">Pickup area <select name="pickup_area_id" required></select></label>
+            <label class="field">Destination area <select name="drop_area_id" required></select></label>
+          </div>
+          <div class="row"><button class="btn small ghost" type="button" data-swap>⇅ Swap</button></div>
+          <div id="options" class="stack"></div>
+          <div class="fare-total" id="fareTotal"></div>
+          <p class="form-error" role="alert"></p>
+          <button class="btn primary" type="submit">Book this ride</button>
+        </form>
+      </section>
+      <div id="meter" class="figure-slot" aria-label="Taximeter showing the selected estimate"></div>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/ride-picker.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page();
+      const { $ } = CAB;
+      const meter = CAB.figure('taximeter', $('#meter'));
+      const f = CAB.$('#search');
+      const picker = await ridePicker(f, {
+        onEstimate: (o, s) => {
+          $('#fareTotal').replaceChildren(...(o ? [CAB.h('b', {}, CAB.fmt.money(o.estimated_fare)), CAB.h('span', {}, `${o.vehicle_type} · ${CAB.fmt.km(s.km)} · about ${s.minutes} min`)] : []));
+          meter.then((m) => m.set(meterData(o, s)));
+        },
+      });
+      CAB.form(f, async () => {
+        const o = picker.option;
+        const target = `/book-ride.html?from=${f.elements.pickup_area_id.value}&to=${f.elements.drop_area_id.value}&type=${o.vehicle_type}`;
+        if (!user) location.href = `/login.html?next=${encodeURIComponent(target)}`;
+        else if (user.role !== 'PASSENGER') throw new Error('Only passengers can book a cab. Log in with a passenger account.');
+        else location.href = target;
+      });
+    })();
+  </script>
+</body>
+</html>
