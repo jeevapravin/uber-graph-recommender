@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Active trip · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/figures/iso.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head">
+      <div><h1>Active trip</h1><p class="muted" id="sub">Live status refreshes every few seconds.</p></div>
+    </div>
+    <div id="none" class="card" hidden></div>
+    <div id="live" class="split" hidden>
+      <div class="stack">
+        <section class="card primary status-hero" aria-live="polite">
+          <div><span class="eyebrow" id="eyebrow"></span><h2 class="status-title" id="headline"></h2></div>
+          <p class="status-sub muted" id="subline"></p>
+          <ol class="stepper" id="stepper"></ol>
+          <div class="row" id="actions"></div>
+        </section>
+        <section class="card primary" id="payCard" hidden>
+          <h2 id="payTitle">Payment</h2>
+          <div id="payBody" class="stack"></div>
+        </section>
+        <section class="card primary" id="reviewCard" hidden>
+          <h2>Rate your driver</h2>
+          <form class="form" id="review">
+            <div class="segmented" role="radiogroup" aria-label="Rating">
+              <label><input type="radio" name="rating" value="1" required><span><b>★</b><small>Poor</small></span></label>
+              <label><input type="radio" name="rating" value="2"><span><b>★★</b><small>Fair</small></span></label>
+              <label><input type="radio" name="rating" value="3"><span><b>★★★</b><small>Good</small></span></label>
+              <label><input type="radio" name="rating" value="4"><span><b>★★★★</b><small>Great</small></span></label>
+              <label><input type="radio" name="rating" value="5"><span><b>★★★★★</b><small>Superb</small></span></label>
+            </div>
+            <label class="field">Comment <small>optional</small><textarea name="comment" maxlength="500"></textarea></label>
+            <p class="form-error" role="alert"></p>
+            <button class="btn primary" type="submit">Submit review</button>
+          </form>
+        </section>
+        <section class="card quiet">
+          <h2>Trip details</h2>
+          <dl class="kv" id="details"></dl>
+        </section>
+      </div>
+      <div class="stack">
+        <div id="route" class="figure-slot" aria-label="Animated city model showing where the cab is"></div>
+        <div id="printer" class="figure-slot" hidden aria-label="Receipt printer showing the payment"></div>
+      </div>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['PASSENGER', 'DRIVER'] });
+      const { api, $, h, fmt, badge, act } = CAB;
+      const isP = user.role === 'PASSENGER';
+      const route = CAB.figure('trip-route', $('#route'));
+      let printer = null;
+      let lastKey = '';
+
+      const STEPS = [['SEARCHING', 'Requested'], ['ACCEPTED', 'Driver assigned'], ['STARTED', 'On trip'], ['COMPLETED', 'Arrived']];
+
+      // the one thing to read on this page: what is happening now, in a sentence
+      function headline(b) {
+        const P = {
+          SEARCHING: ['Finding you a driver', `Looking for a ${b.vehicle_type} near ${b.pickup_location}. This usually takes a minute.`],
+          ACCEPTED: [`${b.driver_name} is on the way`, `${b.vehicle_model} · ${b.vehicle_number}${b.driver_rating ? ` · ★ ${b.driver_rating}` : ''}`],
+          STARTED: [`On the way to ${b.destination}`, `Started ${fmt.date(b.start_time)} with ${b.driver_name}`],
+          COMPLETED: ['You have arrived', b.payment_status === 'PENDING' ? `Final fare ${fmt.money(b.fare)}. Pay below to finish.` : `Final fare ${fmt.money(b.fare)} · ${b.payment_status === 'PAID' ? 'paid' : String(b.payment_status).toLowerCase()}`],
+          CANCELLED: ['Booking cancelled', b.payment_amount ? `Cancellation fee ${fmt.money(b.payment_amount)} (${String(b.payment_status).toLowerCase()})` : 'No charge.'],
+        };
+        const D = {
+          ACCEPTED: ['Drive to the pickup', `${b.pickup_location} · ${b.passenger_name}, ${b.passenger_mobile}`],
+          STARTED: [`Drop at ${b.destination}`, `Started ${fmt.date(b.start_time)} · ${fmt.km(b.distance_km)}`],
+        };
+        const [title, sub] = (!isP && D[b.stage]) || P[b.stage];
+        $('#eyebrow').textContent = `Booking #${b.request_id} · ${b.vehicle_type}`;
+        $('#headline').textContent = title;
+        $('#subline').textContent = sub;
+        const at = STEPS.findIndex(([s]) => s === b.stage);
+        const stepper = $('#stepper');
+        stepper.classList.toggle('cancelled', b.stage === 'CANCELLED');
+        const reached = b.stage === 'CANCELLED' ? (b.trip_id ? 2 : 1) : at + 1;
+        stepper.replaceChildren(...STEPS.map(([, label], i) =>
+          h('li', { class: i < reached && (b.stage === 'COMPLETED' || b.stage === 'CANCELLED' || i < at) ? 'done' : i === at ? 'now' : '' }, label)));
+      }
+
+      function details(b) {
+        const rows = [
+          ['Booking', `#${b.request_id} · ${fmt.date(b.requested_at)}`],
+          ['Pickup', b.pickup_location],
+          ['Destination', b.destination],
+          ['Vehicle', b.vehicle_type],
+          ['Distance', fmt.km(b.distance_km)],
+          ['Estimated fare', fmt.money(b.estimated_fare)],
+        ];
+        if (b.fare !== null && b.fare !== undefined) rows.push([b.stage === 'CANCELLED' ? 'Charged' : 'Final fare', fmt.money(b.fare)]);
+        if (isP && b.driver_name) rows.push(['Driver', b.driver_name], ['Driver phone', h('a', { href: `tel:${b.driver_mobile}` }, b.driver_mobile)], ['Cab', `${b.vehicle_model} · ${b.vehicle_number}`]);
+        if (!isP) rows.push(['Passenger', b.passenger_name], ['Passenger phone', h('a', { href: `tel:${b.passenger_mobile}` }, b.passenger_mobile)]);
+        if (b.start_time) rows.push(['Started', fmt.date(b.start_time)]);
+        if (b.end_time) rows.push(['Ended', fmt.date(b.end_time)]);
+        $('#details').replaceChildren(...rows.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]));
+      }
+
+      // main action first and highlighted; Cancel/SOS last, pushed right, so they are never hit by accident
+      function actions(b) {
+        const btn = (label, cls, fn) => h('button', { class: `btn ${cls}`, onclick: (e) => act(e.currentTarget, fn, load) }, label);
+        const unpaid = b.payment_status === 'PENDING';
+        const main = [
+          !isP && b.stage === 'ACCEPTED' ? btn('Start trip', 'primary', () => api(`/api/driver/trips/${b.trip_id}/start`, { method: 'POST' })) : null,
+          !isP && b.stage === 'STARTED' ? btn('Complete trip', 'primary', () => api(`/api/driver/trips/${b.trip_id}/complete`, { method: 'POST' })) : null,
+          ['COMPLETED', 'CANCELLED'].includes(b.stage)
+            ? h('a', { class: `btn ${isP && unpaid ? '' : 'primary'}`, href: isP ? '/book-ride.html' : '/ride-requests.html' }, isP ? 'Book another ride' : 'Find next ride') : null,
+          b.trip_id && b.payment_id ? h('a', { class: 'btn', href: `/receipt.html?trip=${b.trip_id}` }, 'Receipt') : null,
+        ];
+        const risky = [
+          isP && ['SEARCHING', 'ACCEPTED'].includes(b.stage) ? btn('Cancel booking', 'ghost danger', async () => {
+            const fee = b.stage === 'ACCEPTED' ? ' A driver has accepted, so a cancellation fee applies.' : '';
+            if (!(await CAB.confirmBox('Cancel booking?', `Cancel this ride?${fee}`, 'Cancel ride', true))) return null;
+            return api(`/api/passenger/bookings/${b.request_id}/cancel`, { method: 'POST' });
+          }) : null,
+          ['ACCEPTED', 'STARTED'].includes(b.stage) ? btn('SOS', 'danger', async () => {
+            if (!(await CAB.confirmBox('Send SOS?', 'This alerts the safety team with your trip details.', 'Send SOS', true))) return null;
+            const r = await api(`/api/trips/${b.trip_id}/sos`, { method: 'POST' });
+            if (r.emergency_contact) r.message += ` Emergency contact: ${r.emergency_contact}.`;
+            return r;
+          }) : null,
+        ];
+        $('#actions').replaceChildren(...main, h('span', { class: 'spacer' }), ...risky);
+      }
+
+      async function payment(b) {
+        const card = $('#payCard');
+        const show = isP && b.payment_id;
+        card.hidden = !show;
+        $('#printer').hidden = !show;
+        if (!show) return;
+        if (!printer) printer = await CAB.figure('receipt-printer', $('#printer'));
+        const lines = CAB.receiptLines(b);
+        printer.set(b.payment_status, { amount: b.payment_amount, method: b.payment_method, lines });
+        $('#payTitle').textContent = b.stage === 'CANCELLED' ? 'Cancellation fee' : 'Payment';
+        card.classList.toggle('primary', b.payment_status === 'PENDING');
+        card.classList.toggle('quiet', b.payment_status !== 'PENDING');
+        const body = $('#payBody');
+        if (b.payment_status !== 'PENDING') {
+          body.replaceChildren(h('p', {}, badge(b.payment_status), ' ', `${fmt.money(b.payment_amount)} by ${b.payment_method || '—'} on ${fmt.date(b.paid_at)}`));
+          return;
+        }
+        const methods = ['UPI', 'CARD', 'CASH', 'WALLET'];
+        const f = h('form', { class: 'form' },
+          h('div', { class: 'fare-total' }, h('b', {}, fmt.money(b.payment_amount)), h('span', {}, b.stage === 'CANCELLED' ? 'cancellation fee due' : 'due for this trip')),
+          h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Payment method' },
+            methods.map((m, i) => h('label', {}, h('input', { type: 'radio', name: 'payment_method', value: m, required: true, checked: i === 0 }), h('span', {}, h('b', {}, m))))),
+          h('p', { class: 'form-error', role: 'alert' }),
+          h('button', { class: 'btn primary', type: 'submit' }, `Pay ${fmt.money(b.payment_amount)}`));
+        body.replaceChildren(f);
+        CAB.form(f, async (d) => {
+          const r = await api(`/api/passenger/trips/${b.trip_id}/pay`, { method: 'POST', body: d });
+          CAB.toast(r.message, 'ok');
+          lastKey = '';
+          await load();
+        });
+      }
+
+      async function load() {
+        const { booking: b } = await api(isP ? '/api/passenger/bookings/current' : '/api/driver/trips/active');
+        const key = b ? [b.request_id, b.stage, b.payment_status, b.review_rating].join('|') : 'none';
+        if (key === lastKey) return; // nothing changed since the last poll: leave the DOM alone
+        lastKey = key;
+        $('#none').hidden = !!b;
+        $('#live').hidden = !b;
+        if (!b) {
+          $('#none').replaceChildren(h('h2', {}, 'No active trip'),
+            h('p', { class: 'muted' }, isP ? 'You have no ride right now.' : 'Accept a ride request to start a trip.'),
+            h('a', { class: 'btn primary', href: isP ? '/book-ride.html' : '/ride-requests.html' }, isP ? 'Book a ride' : 'See ride requests'));
+          return;
+        }
+        (await route).set(b.stage, { pickup: b.pickup_location, destination: b.destination });
+        headline(b);
+        details(b);
+        actions(b);
+        await payment(b);
+        $('#reviewCard').hidden = !(isP && b.stage === 'COMPLETED' && !b.review_rating);
+        $('#review').dataset.trip = b.trip_id || '';
+      }
+
+      CAB.form($('#review'), async (d) => {
+        const r = await api(`/api/passenger/trips/${$('#review').dataset.trip}/review`, { method: 'POST', body: d });
+        CAB.toast(r.message, 'ok');
+        await load();
+      });
+      CAB.poll(load, 5000);
+    })();
+  </script>
+</body>
+</html>
