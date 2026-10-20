@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Book a ride · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/figures/iso.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Book a ride</h1><p class="muted">The fare is fixed at booking time; the final fare uses the real trip minutes.</p></div></div>
+    <div class="split">
+      <section class="card">
+        <form class="form" id="book">
+          <div class="fields">
+            <label class="field">Pickup area <select name="pickup_area_id" required></select></label>
+            <label class="field">Destination area <select name="drop_area_id" required></select></label>
+          </div>
+          <div class="fields">
+            <label class="field">Pickup point <small>optional</small><input name="pickup_detail" maxlength="150" placeholder="e.g. Gate 2, Phoenix Mall"></label>
+            <label class="field">Drop point <small>optional</small><input name="drop_detail" maxlength="150"></label>
+          </div>
+          <div class="row"><button class="btn small ghost" type="button" data-swap>⇅ Swap</button></div>
+          <div id="options" class="stack"></div>
+          <div class="row" style="align-items:end">
+            <label class="field" style="flex:1">Promo code <small>optional</small><input name="promo_code" maxlength="20" placeholder="WELCOME50" style="text-transform:uppercase"></label>
+            <button class="btn" type="button" id="applyPromo">Apply</button>
+          </div>
+          <p id="promoNote" class="muted mono" style="margin:0"></p>
+          <div class="fare-total" id="fareTotal"></div>
+          <dl class="kv muted" id="summary" style="font-size:13px"></dl>
+          <p class="form-error" role="alert"></p>
+          <button class="btn primary" type="submit">Confirm booking</button>
+        </form>
+      </section>
+      <div id="meter" class="figure-slot" aria-label="Taximeter showing the selected estimate"></div>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/ride-picker.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['PASSENGER'] });
+      const { api, $, h, fmt } = CAB;
+      const current = await api('/api/passenger/bookings/current');
+      const open = current.booking && ['SEARCHING', 'ACCEPTED', 'STARTED'].includes(current.booking.stage);
+      if (open) {
+        CAB.toast('You already have a ride in progress.', 'info');
+        return setTimeout(() => (location.href = '/active-trip.html'), 800);
+      }
+      const meter = CAB.figure('taximeter', $('#meter'));
+      const f = $('#book');
+      let promo = null;
+      const summary = (o, s) => {
+        const box = $('#summary');
+        box.replaceChildren();
+        $('#fareTotal').replaceChildren();
+        if (!o) return;
+        const discount = promo ? Math.min(promo.max_discount, Math.round((o.estimated_fare * promo.discount_pct) / 100)) : 0;
+        $('#fareTotal').append(h('b', {}, fmt.money(o.estimated_fare - discount)),
+          h('span', {}, `${o.vehicle_type} · ${fmt.km(s.km)} · about ${s.minutes} min`, h('br'), discount ? `${promo.code} saves ${fmt.money(discount)}` : 'estimated fare'));
+        box.append(h('dt', {}, 'Cancellation'), h('dd', {}, `Free until a driver accepts, then ${fmt.money(o.cancellation_fee)}`));
+      };
+      const picker = await ridePicker(f, {
+        onEstimate: (o, s) => {
+          summary(o, s);
+          meter.then((m) => m.set(meterData(o, s)));
+        },
+      });
+      $('#applyPromo').addEventListener('click', (e) =>
+        CAB.act(e.currentTarget, async () => {
+          const code = f.elements.promo_code.value.trim();
+          if (!code) throw new Error('Type a promo code first');
+          promo = await api(`/api/passenger/promo?code=${encodeURIComponent(code)}`);
+          $('#promoNote').textContent = `${promo.code}: ${promo.discount_pct}% off, up to ${fmt.money(promo.max_discount)}`;
+          summary(picker.option, picker.search);
+          return { message: 'Promo applied' };
+        }));
+      f.elements.promo_code.addEventListener('input', () => { promo = null; $('#promoNote').textContent = ''; summary(picker.option, picker.search); });
+      CAB.form(f, async (data) => {
+        if (promo) data.promo_code = promo.code; else delete data.promo_code;
+        const r = await api('/api/passenger/bookings', { method: 'POST', body: data });
+        CAB.toast(`Booked! Estimated fare ${fmt.money(r.estimated_fare)}. Finding a driver…`, 'ok');
+        setTimeout(() => (location.href = '/active-trip.html'), 700);
+      });
+    })();
+  </script>
+</body>
+</html>

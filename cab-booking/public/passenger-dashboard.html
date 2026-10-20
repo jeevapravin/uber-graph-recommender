@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1 id="hello">Hello</h1><p class="muted">Your rides at a glance.</p></div><a class="btn" href="/book-ride.html">Book a ride</a></div>
+    <div class="grid grid-2" style="margin-bottom:24px">
+      <section class="card primary" id="currentCard"><span class="eyebrow">Current booking</span><div id="current"></div></section>
+      <section class="card" id="quickCard">
+        <span class="eyebrow" id="quickEyebrow">Quick book</span><h2 class="status-title" id="quickTitle" style="font-size:1.35rem">Book another ride</h2>
+        <form class="form" id="quick">
+          <div class="fields">
+            <label class="field">From <select name="from" required></select></label>
+            <label class="field">To <select name="to" required></select></label>
+          </div>
+          <button class="btn primary" type="submit">See fares</button>
+        </form>
+      </section>
+    </div>
+    <span class="eyebrow">Your numbers</span>
+    <div class="stats" id="stats"></div>
+    <section class="card quiet">
+      <div class="card-head"><h2>Recent trips</h2><a href="/trip-history.html">All trips →</a></div>
+      <div id="recent"></div>
+    </section>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['PASSENGER'] });
+      const { api, $, h, fmt, badge } = CAB;
+      $('#hello').textContent = `Hello, ${user.name.split(' ')[0]}`;
+      const [sum, trips, areas] = await Promise.all([api('/api/passenger/summary'), api('/api/passenger/trips'), api('/api/areas')]);
+      const s = sum.stats;
+      const stat = (label, value, note, alert) => h('div', { class: `stat${alert ? ' alert' : ''}` }, h('div', { class: 'stat-label' }, label), h('div', { class: 'stat-value' }, value), note ? h('div', { class: 'stat-note' }, note) : null);
+      $('#stats').append(
+        stat('Bookings', fmt.num(s.bookings)), stat('Completed', fmt.num(s.completed)), stat('Cancelled', fmt.num(s.cancelled)),
+        stat('Spent', fmt.money(s.spent)), stat('Unpaid', fmt.num(s.unpaid), s.unpaid ? 'Pay from trip history' : 'All settled', s.unpaid > 0));
+      const c = sum.current;
+      // no ride in progress: the booking form is the main thing on the page
+      $('#currentCard').hidden = !c;
+      $('#quickCard').classList.toggle('primary', !c);
+      if (!c) { $('#quickEyebrow').textContent = 'No ride in progress'; $('#quickTitle').textContent = 'Where to?'; }
+      $('#current').append(c
+        ? h('div', { class: 'stack' }, h('h2', { class: 'status-title', style: { fontSize: '1.35rem' } }, `${c.pickup_location} → ${c.destination}`), h('div', {}, badge(c.stage)),
+            h('p', { class: 'muted mono' }, `${c.vehicle_type} · ${fmt.km(c.distance_km)} · est. ${fmt.money(c.estimated_fare)}`),
+            c.driver_name ? h('p', {}, `Driver ${c.driver_name} · ${c.vehicle_number}`) : h('p', { class: 'muted' }, 'Waiting for a driver to accept…'),
+            h('a', { class: 'btn primary', href: '/active-trip.html' }, 'Track ride'))
+        : null);
+      const q = $('#quick');
+      for (const n of ['from', 'to']) q.elements[n].append(h('option', { value: '' }, 'Choose'), ...areas.map((a) => h('option', { value: a.area_id }, a.area_name)));
+      CAB.form(q, async (d) => { location.href = `/book-ride.html?from=${d.from}&to=${d.to}`; });
+      CAB.table($('#recent'), [
+        { label: 'When', render: (r) => fmt.date(r.requested_at) },
+        { label: 'Route', render: (r) => `${r.pickup_location} → ${r.destination}` },
+        { label: 'Status', render: (r) => badge(r.stage) },
+        { label: 'Fare', class: 'num', render: (r) => fmt.money(r.fare ?? r.estimated_fare) },
+      ], trips.slice(0, 5), 'No trips yet. Book your first ride!');
+    })();
+  </script>
+</body>
+</html>
