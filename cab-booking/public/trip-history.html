@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trip history · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Trip history</h1><p class="muted" id="sub"></p></div></div>
+    <div class="filters">
+      <label class="field">Search <input id="q" type="search" placeholder="Area, driver, passenger…"></label>
+      <label class="field">Status
+        <select id="stage"><option value="">All</option><option>COMPLETED</option><option>CANCELLED</option><option>STARTED</option><option>ACCEPTED</option><option>SEARCHING</option></select>
+      </label>
+    </div>
+    <div id="list"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['PASSENGER', 'DRIVER'] });
+      const { api, $, h, fmt, badge, act } = CAB;
+      const isP = user.role === 'PASSENGER';
+      $('#sub').textContent = isP ? 'Every booking you made, with fares, payments and your ratings.' : 'Every trip you drove, with the fare and the rating you received.';
+      let rows = [];
+
+      const payDialog = (r) => {
+        const f = h('form', { class: 'form' },
+          h('p', { class: 'mono' }, `Amount due: ${fmt.money(r.payment_amount)}`),
+          h('label', { class: 'field' }, 'Method', h('select', { name: 'payment_method', required: true }, ['UPI', 'CARD', 'CASH', 'WALLET'].map((m) => h('option', {}, m)))),
+          h('p', { class: 'form-error' }), h('button', { class: 'btn primary', type: 'submit' }, 'Pay now'));
+        const dlg = CAB.modal('Pay for trip', f);
+        CAB.form(f, async (d) => {
+          const res = await api(`/api/passenger/trips/${r.trip_id}/pay`, { method: 'POST', body: d });
+          CAB.toast(res.message, 'ok');
+          dlg.close();
+          load();
+        });
+      };
+      const rateDialog = (r) => {
+        const f = h('form', { class: 'form' },
+          h('label', { class: 'field' }, 'Rating', h('select', { name: 'rating', required: true }, [5, 4, 3, 2, 1].map((n) => h('option', { value: n }, '★'.repeat(n))))),
+          h('label', { class: 'field' }, 'Comment', h('textarea', { name: 'comment', maxlength: 500 })),
+          h('p', { class: 'form-error' }), h('button', { class: 'btn primary', type: 'submit' }, 'Submit'));
+        const dlg = CAB.modal(`Rate ${r.driver_name}`, f);
+        CAB.form(f, async (d) => {
+          const res = await api(`/api/passenger/trips/${r.trip_id}/review`, { method: 'POST', body: d });
+          CAB.toast(res.message, 'ok');
+          dlg.close();
+          load();
+        });
+      };
+
+      function render() {
+        const q = $('#q').value.toLowerCase();
+        const stage = $('#stage').value;
+        const shown = rows.filter((r) => (!stage || r.stage === stage) &&
+          (!q || [r.pickup_location, r.destination, r.driver_name, r.passenger_name, r.vehicle_number].some((x) => x && x.toLowerCase().includes(q))));
+        CAB.table($('#list'), [
+          { label: 'When', render: (r) => fmt.date(r.requested_at) },
+          { label: 'Route', render: (r) => h('div', {}, h('div', {}, r.pickup_location), h('div', { class: 'muted' }, '→ ' + r.destination)) },
+          { label: isP ? 'Driver' : 'Passenger', render: (r) => (isP ? (r.driver_name ? `${r.driver_name} · ${r.vehicle_number}` : '—') : r.passenger_name) },
+          { label: 'Type', render: (r) => h('span', { class: 'mono' }, r.vehicle_type) },
+          { label: 'Km', class: 'num', render: (r) => fmt.num(r.distance_km, 1) },
+          { label: 'Fare', class: 'num', render: (r) => fmt.money(r.fare ?? r.estimated_fare) },
+          { label: 'Status', render: (r) => badge(r.stage) },
+          { label: 'Payment', render: (r) => badge(r.payment_status) },
+          { label: 'Rating', render: (r) => fmt.stars(r.review_rating) },
+          { label: '', render: (r) => h('div', { class: 'row' },
+              r.payment_id ? h('a', { class: 'btn small', href: `/receipt.html?trip=${r.trip_id}` }, 'Receipt') : null,
+              isP && r.payment_status === 'PENDING' ? h('button', { class: 'btn small primary', onclick: () => payDialog(r) }, 'Pay') : null,
+              isP && r.stage === 'COMPLETED' && !r.review_rating ? h('button', { class: 'btn small', onclick: () => rateDialog(r) }, 'Rate') : null,
+              h('a', { class: 'btn small ghost', href: `/support.html?booking=${r.request_id}` }, 'Report issue')) },
+        ], shown, 'No trips match.');
+      }
+      async function load() {
+        rows = await api(isP ? '/api/passenger/trips' : '/api/driver/trips');
+        render();
+      }
+      $('#q').addEventListener('input', render);
+      $('#stage').addEventListener('change', render);
+      load();
+    })();
+  </script>
+</body>
+</html>

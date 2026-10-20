@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Support · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Support</h1><p class="muted">Raise an issue about a booking; an admin replies here.</p></div></div>
+    <div class="grid grid-2">
+      <section class="card">
+        <h2>New ticket</h2>
+        <form class="form" id="ticket">
+          <label class="field">Booking <small>optional</small><select name="request_id"><option value="">Not about a specific booking</option></select></label>
+          <label class="field">Category
+            <select name="category" required><option>FARE</option><option>PAYMENT</option><option>DRIVER</option><option>PASSENGER</option><option>SAFETY</option><option>OTHER</option></select>
+          </label>
+          <label class="field">What happened? <small>min 10 characters</small><textarea name="message" required minlength="10" maxlength="1000"></textarea></label>
+          <p class="form-error" role="alert"></p>
+          <button class="btn primary" type="submit">Send</button>
+        </form>
+      </section>
+      <section class="card"><h2>My tickets</h2><div id="list" class="stack"></div></section>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['PASSENGER', 'DRIVER'] });
+      const { api, $, h, fmt, badge } = CAB;
+      const f = $('#ticket');
+      const trips = await api(user.role === 'PASSENGER' ? '/api/passenger/trips' : '/api/driver/trips');
+      f.elements.request_id.append(...trips.map((t) => h('option', { value: t.request_id }, `#${t.request_id} · ${fmt.date(t.requested_at)} · ${t.pickup_location} → ${t.destination}`)));
+      const pre = new URLSearchParams(location.search).get('booking');
+      if (pre) f.elements.request_id.value = pre;
+      async function load() {
+        const list = await api('/api/tickets');
+        $('#list').replaceChildren(...(list.length ? list.map((t) =>
+          h('div', { class: 'card', style: { boxShadow: 'none' } },
+            h('div', { class: 'row' }, badge(t.status), h('b', { class: 'mono' }, `#${t.ticket_id} ${t.category}`), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, fmt.date(t.created_at))),
+            t.request_id ? h('p', { class: 'muted' }, `Booking #${t.request_id}: ${t.pickup_location} → ${t.destination}`) : null,
+            h('p', {}, t.message),
+            t.admin_reply ? h('p', { class: 'mono', style: { borderLeft: '2px solid var(--accent)', paddingLeft: '10px' } }, `Admin: ${t.admin_reply}`) : null))
+          : [h('p', { class: 'muted' }, 'No tickets yet.')]));
+      }
+      CAB.form(f, async (d, el) => {
+        if (!d.request_id) delete d.request_id;
+        CAB.toast((await api('/api/tickets', { method: 'POST', body: d })).message, 'ok');
+        el.reset();
+        load();
+      });
+      load();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Receipt · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/figures/iso.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="split">
+      <section class="card">
+        <div class="receipt" id="receipt"></div>
+        <div class="row no-print" style="justify-content:center;margin-top:18px">
+          <button class="btn primary" onclick="print()">Print / save PDF</button>
+          <button class="btn" onclick="history.back()">Back</button>
+        </div>
+      </section>
+      <div id="printer" class="figure-slot no-print" aria-label="Receipt printer"></div>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['PASSENGER', 'DRIVER', 'ADMIN'] });
+      const { api, $, h, fmt } = CAB;
+      const id = Number(new URLSearchParams(location.search).get('trip'));
+      const box = $('#receipt');
+      if (!id) return box.append(h('p', {}, 'No trip given.'));
+      try {
+        const { booking: b } = await api(`/api/trips/${id}/receipt`);
+        const lines = CAB.receiptLines(b);
+        const line = (k, v, cls = '') => h('div', { class: `line ${cls}` }, h('span', {}, k), h('span', {}, v));
+        const total = b.payment_amount ?? b.fare;
+        box.append(
+          h('h2', { style: { textAlign: 'center' } }, (window.CAB_APP_NAME || 'CabGo') + ' · Trip receipt'),
+          h('p', { class: 'muted', style: { textAlign: 'center' } }, `Trip #${b.trip_id} · Booking #${b.request_id}`),
+          line('Date', fmt.date(b.end_time || b.requested_at)),
+          line('From', b.pickup_location), line('To', b.destination),
+          line('Passenger', b.passenger_name), line('Driver', b.driver_name || '—'),
+          line('Cab', b.vehicle_number ? `${b.vehicle_type} · ${b.vehicle_number}` : b.vehicle_type),
+          h('div', { style: { height: '10px' } }),
+          ...lines.map((l) => line(l.label, l.amount < 0 ? `− ${fmt.money(-l.amount)}` : fmt.money(l.amount))),
+          line('Total', fmt.money(total), 'total'),
+          line('Payment', `${b.payment_status || '—'}${b.payment_method ? ' · ' + b.payment_method : ''}`),
+          b.paid_at ? line('Paid at', fmt.date(b.paid_at)) : null,
+        );
+        const printer = await CAB.figure('receipt-printer', $('#printer'));
+        printer.set(b.payment_status || 'PENDING', { amount: total, method: b.payment_method, lines });
+      } catch (ex) {
+        box.append(h('p', { class: 'form-error' }, ex.message));
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Profile · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>My profile</h1><p class="muted" id="sub"></p></div></div>
+    <div class="grid grid-2">
+      <section class="card">
+        <h2>Details</h2>
+        <form class="form" id="profile">
+          <label class="field">Email <small>cannot be changed</small><input name="email" disabled></label>
+          <div class="fields">
+            <label class="field">Full name <input name="name" required minlength="2" maxlength="100"></label>
+            <label class="field">Mobile <input name="mobile" required pattern="[0-9]{10}" maxlength="10" inputmode="numeric"></label>
+          </div>
+          <div class="fields" data-role="PASSENGER" hidden>
+            <label class="field">Home address <input name="default_address" maxlength="255"></label>
+            <label class="field">Emergency contact <input name="emergency_contact" pattern="[0-9]{10}" maxlength="10" inputmode="numeric"></label>
+          </div>
+          <div class="fields" data-role="DRIVER" hidden>
+            <label class="field">Licence no. <input name="license_no" minlength="5" maxlength="30"></label>
+            <label class="field">Licence expiry <input name="license_expiry" type="date"></label>
+          </div>
+          <p class="form-error" role="alert"></p>
+          <button class="btn primary" type="submit">Save changes</button>
+        </form>
+      </section>
+      <div class="stack">
+        <section class="card"><h2>Account</h2><dl class="kv" id="account"></dl></section>
+        <section class="card">
+          <h2>Change password</h2>
+          <form class="form" id="password">
+            <label class="field">Current password <input name="current_password" type="password" required autocomplete="current-password"></label>
+            <label class="field">New password <input name="new_password" type="password" required minlength="6" maxlength="100" autocomplete="new-password"></label>
+            <p class="form-error" role="alert"></p>
+            <button class="btn" type="submit">Change password</button>
+          </form>
+        </section>
+      </div>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['PASSENGER', 'DRIVER', 'ADMIN', 'SUPER_ADMIN'] });
+      const { api, $, $$, h, fmt, badge } = CAB;
+      const p = await api('/api/profile');
+      $('#sub').textContent = `${p.role.replace('_', ' ')} account`;
+      const f = $('#profile');
+      $$('[data-role]', f).forEach((el) => {
+        const on = el.dataset.role === p.role;
+        el.hidden = !on;
+        $$('input', el).forEach((i) => (i.disabled = !on));
+      });
+      if (p.role === 'DRIVER') { f.elements.license_no.required = true; f.elements.license_expiry.required = true; }
+      CAB.fill(f, { ...p, ...(p.profile || {}), license_expiry: p.profile && p.profile.license_expiry ? String(p.profile.license_expiry).slice(0, 10) : '' });
+      const acc = [['Role', badge(p.role)], ['Status', badge(p.status)], ['Member since', fmt.day(p.created_at)]];
+      if (p.role === 'DRIVER') acc.push(['Verification', badge(p.profile.verification_status)], ['Rating', p.profile.rating ? `★ ${p.profile.rating}` : 'No ratings yet'], ['Availability', badge(p.profile.availability)]);
+      if (p.role === 'ADMIN') acc.push(['Permissions', p.permissions.length ? p.permissions.map((x) => x.replace(/_/g, ' ').toLowerCase()).join(', ') : 'none']);
+      $('#account').append(...acc.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]));
+      CAB.form(f, async (d) => CAB.toast((await api('/api/profile', { method: 'PUT', body: d })).message, 'ok'));
+      CAB.form($('#password'), async (d, el) => {
+        CAB.toast((await api('/api/profile/password', { method: 'PUT', body: d })).message, 'ok');
+        el.reset();
+      });
+    })();
+  </script>
+</body>
+</html>
