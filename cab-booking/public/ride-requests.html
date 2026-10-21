@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ride requests · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Ride requests</h1><p class="muted" id="state">Checking…</p></div><span class="badge info live" id="pulse">LIVE · every 5 s</span></div>
+    <div id="list" class="grid grid-3"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['DRIVER'] });
+      const { api, $, h, fmt, act } = CAB;
+      let seen = new Set();
+      async function load() {
+        const r = await api('/api/driver/requests');
+        const list = $('#list');
+        $('#state').textContent = r.busy ? 'You have an active trip. Finish it to take another request.'
+          : !r.online ? 'You are offline. Go online from the dashboard to see requests.'
+          : r.requests.length ? `${r.requests.length} open request${r.requests.length > 1 ? 's' : ''} for your vehicle types.` : 'No open requests right now. New ones appear here automatically.';
+        if (r.busy) list.replaceChildren(h('div', { class: 'card' }, h('a', { class: 'btn primary', href: '/active-trip.html' }, 'Go to active trip')));
+        else if (!r.online) list.replaceChildren(h('div', { class: 'card' }, h('a', { class: 'btn primary', href: '/driver-dashboard.html' }, 'Open dashboard')));
+        else list.replaceChildren(...r.requests.map((q) => {
+          const fresh = !seen.has(q.request_id);
+          return h('section', { class: 'card stack', style: fresh ? { animation: 'rowIn .4s ease both' } : {} },
+            h('div', { class: 'row' }, h('span', { class: 'badge warn live' }, q.vehicle_type), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, fmt.date(q.requested_at))),
+            h('div', {}, h('b', {}, q.pickup_location), h('div', { class: 'muted' }, '→ ' + q.destination)),
+            h('div', { class: 'row mono' }, h('span', {}, fmt.km(q.distance_km)), h('span', { class: 'spacer' }), h('b', { style: { fontSize: '1.2rem', color: 'var(--strong)' } }, fmt.money(q.estimated_fare))),
+            h('p', { class: 'muted', style: { margin: 0 } }, `Passenger: ${q.passenger_name}`),
+            h('div', { class: 'row' },
+              h('button', { class: 'btn primary', onclick: (e) => act(e.currentTarget, () => api(`/api/driver/requests/${q.request_id}/accept`, { method: 'POST' }), () => (location.href = '/active-trip.html')) }, 'Accept'),
+              h('button', { class: 'btn', onclick: (e) => act(e.currentTarget, () => api(`/api/driver/requests/${q.request_id}/reject`, { method: 'POST' }), load) }, 'Reject')));
+        }));
+        seen = new Set(r.requests.map((q) => q.request_id));
+      }
+      CAB.poll(load, 5000);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Driver dashboard · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/figures/iso.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1 id="hello">Driver dashboard</h1><p class="muted">Turn the roof sign on to get ride requests.</p></div><span id="verify"></span></div>
+    <div class="split" style="margin-bottom:24px">
+      <section class="card primary status-hero">
+        <div><span class="eyebrow">Availability</span><h2 class="status-title" id="headline"></h2></div>
+        <p class="status-sub muted" id="note"></p>
+        <div class="row"><button class="btn primary" id="toggle">Go online</button><a class="btn" href="/active-trip.html" id="activeLink" hidden>Open active trip</a><a class="btn" href="/ride-requests.html">Ride requests</a></div>
+        <div id="checklist"></div>
+      </section>
+      <div id="sign" class="figure-slot" aria-label="Taxi roof sign: availability switch"></div>
+    </div>
+    <span class="eyebrow">Your numbers</span>
+    <div class="stats" id="stats"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['DRIVER'] });
+      const { api, $, h, fmt, badge, toast } = CAB;
+      $('#hello').textContent = `Hello, ${user.name.split(' ')[0]}`;
+      const signEl = $('#sign');
+      const sign = await CAB.figure('taxi-sign', signEl);
+      let s;
+
+      async function load() {
+        s = await api('/api/driver/summary');
+        const online = s.driver.availability === 'ONLINE';
+        const blocker = s.driver.verification_status !== 'APPROVED' ? 'Waiting for admin approval' : !s.active_vehicles ? 'Add an active vehicle first' : '';
+        sign.set(online, { disabled: !!blocker && !online, note: blocker });
+        $('#headline').textContent = s.has_active_trip ? 'You are on a trip' : online ? 'You are online' : 'You are offline';
+        $('#verify').replaceChildren(badge(s.driver.verification_status));
+        const btn = $('#toggle');
+        btn.textContent = online ? 'Go offline' : 'Go online';
+        btn.disabled = !!blocker && !online;
+        $('#activeLink').hidden = !s.has_active_trip;
+        $('#activeLink').className = s.has_active_trip ? 'btn primary' : 'btn';
+        btn.className = s.has_active_trip ? 'btn' : 'btn primary';
+        $('#note').textContent = blocker ? `${blocker} before you can go online.` : s.has_active_trip ? 'Finish it before taking another request.' : online ? 'Passengers can see you. New requests show up under Ride requests.' : 'Passengers cannot see you and you get no requests.';
+        const stat = (l, v, n) => h('div', { class: 'stat' }, h('div', { class: 'stat-label' }, l), h('div', { class: 'stat-value' }, v), n ? h('div', { class: 'stat-note' }, n) : null);
+        $('#stats').replaceChildren(
+          stat('Today', fmt.money(s.today_earnings), `${s.today_trips} trips`),
+          stat('Total earnings', fmt.money(s.earnings), `after ${s.commission_pct}% commission`),
+          stat('Trips', fmt.num(s.trips)),
+          stat('Rating', s.driver.rating ? `★ ${s.driver.rating}` : '—'),
+          stat('Vehicles', fmt.num(s.active_vehicles), 'active'));
+        const items = [
+          ['Profile approved by admin', s.driver.verification_status === 'APPROVED', '/profile.html'],
+          ['At least one active vehicle', s.active_vehicles > 0, '/vehicles.html'],
+          ['Online', online, null],
+        ];
+        // the checklist only matters while something blocks going online
+        $('#checklist').replaceChildren(blocker ? h('ol', { class: 'timeline' }, items.map(([t, ok, href]) => h('li', { class: ok ? 'done' : 'now' }, href && !ok ? h('a', { href }, t) : t))) : null);
+      }
+
+      async function toggle() {
+        const want = s.driver.availability === 'ONLINE' ? 'OFFLINE' : 'ONLINE';
+        try {
+          await api('/api/driver/availability', { method: 'PUT', body: { availability: want } });
+          toast(want === 'ONLINE' ? 'You are online. Requests will appear on the Ride requests page.' : 'You are offline.', 'ok');
+        } catch (ex) {
+          toast(ex.message, 'bad');
+        }
+        await load();
+      }
+      signEl.addEventListener('cabfig:toggle', toggle);
+      $('#toggle').addEventListener('click', toggle);
+      CAB.poll(load, 15000);
+    })();
+  </script>
+</body>
+</html>
