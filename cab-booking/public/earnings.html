@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Earnings · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Earnings & reviews</h1><p class="muted" id="sub"></p></div></div>
+    <div class="stats" id="stats"></div>
+    <div class="grid grid-2">
+      <section class="card"><h2>Last 14 days</h2><div class="bars" id="bars"></div></section>
+      <section class="card"><div class="card-head"><h2>Reviews</h2><span id="avg"></span></div><div id="reviews" class="stack"></div></section>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['DRIVER'] });
+      const { api, $, h, fmt } = CAB;
+      const [e, r] = await Promise.all([api('/api/driver/earnings'), api('/api/driver/reviews')]);
+      $('#sub').textContent = `Net earnings are fares minus the ${e.commission_pct}% platform commission.`;
+      const stat = (l, v) => h('div', { class: 'stat' }, h('div', { class: 'stat-label' }, l), h('div', { class: 'stat-value' }, v));
+      $('#stats').append(stat('Net earnings', fmt.money(e.total.net)), stat('Gross fares', fmt.money(e.total.gross)), stat('Trips', fmt.num(e.total.trips)), stat('Distance', fmt.km(e.total.km)));
+      const days = [];
+      for (let i = 13; i >= 0; i--) days.push(new Date(Date.now() - i * 864e5).toLocaleDateString('en-CA'));
+      const by = Object.fromEntries(e.daily.map((d) => [String(d.day).slice(0, 10), d]));
+      const max = Math.max(1, ...e.daily.map((d) => d.net));
+      $('#bars').append(...days.map((d) => {
+        const row = by[d];
+        const fill = h('div', { class: 'bar-fill' });
+        requestAnimationFrame(() => requestAnimationFrame(() => (fill.style.width = `${((row ? row.net : 0) / max) * 100}%`)));
+        return h('div', { class: 'bar', title: row ? `${row.trips} trips` : 'no trips' }, h('span', { class: 'muted' }, fmt.day(d).replace(/ \d{4}$/, '')), h('div', { class: 'bar-track' }, fill), h('span', {}, fmt.money(row ? row.net : 0)));
+      }));
+      $('#avg').replaceChildren(r.rating ? h('b', { class: 'mono' }, `★ ${r.rating} · ${r.reviews.length} reviews`) : h('span', { class: 'muted' }, 'No ratings yet'));
+      $('#reviews').append(...(r.reviews.length ? r.reviews.map((x) =>
+        h('div', {}, h('div', { class: 'row' }, fmt.stars(x.rating), h('b', {}, x.reviewer), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, fmt.date(x.created_at))),
+          h('p', { class: 'muted', style: { margin: '2px 0' } }, `${x.pickup_location} → ${x.destination}`), x.comment ? h('p', {}, x.comment) : null))
+        : [h('p', { class: 'muted' }, 'Complete trips to collect reviews.')]));
+    })();
+  </script>
+</body>
+</html>

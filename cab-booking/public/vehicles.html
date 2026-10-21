@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My vehicles · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>My vehicles</h1><p class="muted">Up to 3 vehicles. You receive requests for every active vehicle type.</p></div><button class="btn primary" id="add">Add vehicle</button></div>
+    <div id="list"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['DRIVER'] });
+      const { api, $, h, badge, act } = CAB;
+      const TYPES = { BIKE: 1, AUTO: 3, MINI: 4, SEDAN: 4, SUV: 6 };
+
+      function editor(vh) {
+        const f = h('form', { class: 'form' },
+          h('div', { class: 'fields' },
+            h('label', { class: 'field' }, 'Number plate', h('input', { name: 'vehicle_number', required: true, pattern: '[A-Za-z]{2}[0-9]{1,2}[A-Za-z]{0,3}[0-9]{1,4}', placeholder: 'TN09AB1234', maxlength: 12, style: 'text-transform:uppercase' })),
+            h('label', { class: 'field' }, 'Type', h('select', { name: 'vehicle_type', required: true }, Object.keys(TYPES).map((t) => h('option', {}, t))))),
+          h('div', { class: 'fields' },
+            h('label', { class: 'field' }, 'Model', h('input', { name: 'model', required: true, minlength: 2, maxlength: 60, placeholder: 'Maruti Dzire' })),
+            h('label', { class: 'field' }, 'Seats', h('input', { name: 'capacity', type: 'number', required: true, min: 1, max: 8 }))),
+          vh ? h('label', { class: 'field' }, 'Status', h('select', { name: 'status' }, h('option', {}, 'ACTIVE'), h('option', {}, 'INACTIVE'))) : null,
+          h('p', { class: 'form-error' }), h('button', { class: 'btn primary', type: 'submit' }, vh ? 'Save' : 'Add vehicle'));
+        CAB.fill(f, vh || { vehicle_type: 'SEDAN', capacity: 4 });
+        f.elements.vehicle_type.addEventListener('change', (e) => (f.elements.capacity.value = TYPES[e.target.value]));
+        const dlg = CAB.modal(vh ? `Edit ${vh.vehicle_number}` : 'Add vehicle', f);
+        CAB.form(f, async (d) => {
+          const r = await api(vh ? `/api/driver/vehicles/${vh.vehicle_id}` : '/api/driver/vehicles', { method: vh ? 'PUT' : 'POST', body: d });
+          CAB.toast(r.message || 'Vehicle added', 'ok');
+          dlg.close();
+          load();
+        });
+      }
+
+      async function load() {
+        CAB.table($('#list'), [
+          { label: 'Plate', render: (x) => h('b', { class: 'mono' }, x.vehicle_number) },
+          { label: 'Type', key: 'vehicle_type' },
+          { label: 'Model', key: 'model' },
+          { label: 'Seats', class: 'num', key: 'capacity' },
+          { label: 'Status', render: (x) => badge(x.status) },
+          { label: '', render: (x) => h('div', { class: 'row' },
+              h('button', { class: 'btn small', onclick: () => editor(x) }, 'Edit'),
+              h('button', { class: 'btn small danger', onclick: async (e) => {
+                const b = e.currentTarget;
+                if (await CAB.confirmBox('Delete vehicle?', `Delete ${x.vehicle_number}? Vehicles with trips can only be set inactive.`, 'Delete', true))
+                  act(b, () => api(`/api/driver/vehicles/${x.vehicle_id}`, { method: 'DELETE' }), load);
+              } }, 'Delete')) },
+        ], await api('/api/driver/vehicles'), 'No vehicles yet. Add one to go online.');
+      }
+      $('#add').addEventListener('click', () => editor(null));
+      load();
+    })();
+  </script>
+</body>
+</html>
