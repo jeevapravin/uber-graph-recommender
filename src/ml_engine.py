@@ -45,9 +45,8 @@ def get_optimal_route(start_lat: float, start_lon: float, end_lat: float, end_lo
         # The worker.py expects a list of tuples, but since GeoJSON gives [lon, lat],
         # let's return it exactly how worker expects to build its WKT.
         # Worker expects route_coords elements returning (lat, lon) or (lon, lat).
-        # We will standardize on a list of `(lon, lat)` to easily convert to WKT string.
-        
-        route_coords = coordinates # list of [lon, lat]
+        # Convert OSRM GeoJSON [lon, lat] to Leaflet-compatible [lat, lon]
+        route_coords = [[lat, lon] for lon, lat in coordinates]
 
         return {
             "status": "success",
