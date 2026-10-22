@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin dashboard · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Operations</h1><p class="muted">Live counts refresh every 10 seconds.</p></div><span class="badge info live">LIVE</span></div>
+    <div id="sos" class="alert-list"></div>
+    <span class="eyebrow">Needs attention</span>
+    <div class="stats" id="attention"></div>
+    <span class="eyebrow">Today</span>
+    <div class="stats" id="today"></div>
+    <span class="eyebrow">Platform</span>
+    <div class="stats" id="platform"></div>
+    <section class="card"><div class="card-head"><h2>Recent activity</h2><a href="/system-logs.html" id="logsLink">All logs →</a></div><div id="activity"></div></section>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/admin.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['ADMIN'] });
+      const { api, $, h, fmt, badge } = CAB;
+      const link = (href, perm, node) => (user.permissions.includes(perm) ? h('a', { href, style: { textDecoration: 'none' } }, node) : node);
+      async function load() {
+        const s = await api('/api/admin/summary');
+        const c = s.counts;
+        $('#attention').replaceChildren(
+          link('/manage-trips.html?stage=SEARCHING', 'MANAGE_TRIPS', ADMIN.stat('Waiting for a driver', fmt.num(c.searching), 'open requests', c.searching > 0)),
+          link('/manage-drivers.html', 'MANAGE_DRIVERS', ADMIN.stat('Drivers to approve', fmt.num(c.pending_drivers), 'pending verification', c.pending_drivers > 0)),
+          link('/manage-tickets.html', 'MANAGE_TRIPS', ADMIN.stat('Open tickets', fmt.num(c.open_tickets), 'support requests', c.open_tickets > 0)));
+        $('#today').replaceChildren(
+          ADMIN.stat('Bookings', fmt.num(c.today_bookings)),
+          ADMIN.stat('Revenue', fmt.money(c.today_revenue)),
+          link('/manage-trips.html?stage=STARTED', 'MANAGE_TRIPS', ADMIN.stat('Trips in progress', fmt.num(c.active_trips))),
+          ADMIN.stat('Drivers online', fmt.num(c.online_drivers)));
+        $('#platform').replaceChildren(
+          ADMIN.stat('Total revenue', fmt.money(c.total_revenue)),
+          link('/manage-passengers.html', 'MANAGE_PASSENGERS', ADMIN.stat('Passengers', fmt.num(c.passengers))),
+          link('/manage-drivers.html', 'MANAGE_DRIVERS', ADMIN.stat('Drivers', fmt.num(c.drivers))),
+          link('/manage-vehicles.html', 'MANAGE_VEHICLES', ADMIN.stat('Vehicles', fmt.num(c.vehicles))));
+        $('#sos').replaceChildren(...s.sos.map((x) => h('div', { class: 'alert-row', role: 'alert' },
+          badge('SOS'), h('span', {}, x.description), h('span', { class: 'spacer' }), h('span', {}, fmt.date(x.created_at)))));
+        $('#logsLink').hidden = !user.permissions.includes('VIEW_LOGS');
+        if (!user.permissions.includes('VIEW_LOGS')) return $('#activity').replaceChildren(h('p', { class: 'muted' }, 'You need the VIEW_LOGS permission to see activity.'));
+        CAB.table($('#activity'), [
+          { label: 'When', render: (r) => fmt.date(r.created_at) },
+          { label: 'Who', render: (r) => r.name || 'system' },
+          { label: 'Action', render: (r) => h('span', { class: 'mono' }, r.action) },
+          { label: 'Details', key: 'description' },
+        ], s.activity);
+      }
+      CAB.poll(load, 10000);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Drivers · CabGo admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Drivers</h1><p class="muted">Approve or reject new drivers, and block or unblock accounts.</p></div></div>
+    <div class="filters">
+      <label class="field">Search <input id="q" type="search" placeholder="Name, email or licence"></label>
+      <label class="field">Verification <select id="ver"><option value="">All</option><option>PENDING</option><option>APPROVED</option><option>REJECTED</option></select></label>
+    </div>
+    <div id="list"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/admin.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['ADMIN'] });
+      const { api, $, h, fmt, badge, act } = CAB;
+      let t;
+      const verify = (r, status) => (e) => act(e.currentTarget, () => api(`/api/admin/drivers/${r.driver_id}/verification`, { method: 'PUT', body: { verification_status: status } }), load);
+      async function load() {
+        const rows = await api(`/api/admin/drivers?q=${encodeURIComponent($('#q').value)}${$('#ver').value ? `&verification=${$('#ver').value}` : ''}`);
+        CAB.table($('#list'), [
+          { label: 'Name', render: (r) => h('button', { class: 'btn small ghost', onclick: () => ADMIN.userDialog(r.user_id) }, r.name) },
+          { label: 'Licence', render: (r) => h('div', {}, h('span', { class: 'mono' }, r.license_no), h('div', { class: 'muted' }, `exp. ${fmt.day(r.license_expiry)}`)) },
+          { label: 'Mobile', render: (r) => h('span', { class: 'mono' }, r.mobile) },
+          { label: 'Vehicles', class: 'num', key: 'vehicles' },
+          { label: 'Trips', class: 'num', key: 'trips' },
+          { label: 'Rating', render: (r) => (r.rating ? `★ ${r.rating}` : '—') },
+          { label: 'Verification', render: (r) => badge(r.verification_status) },
+          { label: 'Online', render: (r) => badge(r.availability) },
+          { label: 'Account', render: (r) => badge(r.status) },
+          { label: '', render: (r) => h('div', { class: 'row' },
+              r.verification_status !== 'APPROVED' ? h('button', { class: 'btn small primary', onclick: verify(r, 'APPROVED') }, 'Approve') : null,
+              r.verification_status !== 'REJECTED' ? h('button', { class: 'btn small', onclick: verify(r, 'REJECTED') }, 'Reject') : null,
+              h('button', { class: `btn small ${r.status === 'ACTIVE' ? 'danger' : ''}`, onclick: (e) => act(e.currentTarget, () => api(`/api/admin/users/${r.user_id}/status`, { method: 'PUT', body: { status: r.status === 'ACTIVE' ? 'BLOCKED' : 'ACTIVE' } }), load) }, r.status === 'ACTIVE' ? 'Block' : 'Unblock')) },
+        ], rows, 'No drivers found.');
+      }
+      $('#q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 250); });
+      $('#ver').addEventListener('change', load);
+      load();
+    })();
+  </script>
+</body>
+</html>
