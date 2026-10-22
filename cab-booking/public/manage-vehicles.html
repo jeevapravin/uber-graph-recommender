@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vehicles · CabGo admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Vehicles</h1><p class="muted">Every registered vehicle. Inactive vehicles get no ride requests.</p></div></div>
+    <div class="filters"><label class="field">Search <input id="q" type="search" placeholder="Plate, model or driver"></label></div>
+    <div id="list"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/admin.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['ADMIN'] });
+      const { api, $, h, badge, act } = CAB;
+      let t;
+      const FIELDS = [
+        { name: 'vehicle_type', label: 'Type', options: ['BIKE', 'AUTO', 'MINI', 'SEDAN', 'SUV'], required: true },
+        { name: 'model', label: 'Model', required: true, minlength: 2, maxlength: 60 },
+        { name: 'capacity', label: 'Seats', type: 'number', min: 1, max: 8, required: true },
+        { name: 'status', label: 'Status', options: ['ACTIVE', 'INACTIVE'], required: true },
+      ];
+      async function load() {
+        CAB.table($('#list'), [
+          { label: 'Plate', render: (x) => h('b', { class: 'mono' }, x.vehicle_number) },
+          { label: 'Type', key: 'vehicle_type' },
+          { label: 'Model', key: 'model' },
+          { label: 'Seats', class: 'num', key: 'capacity' },
+          { label: 'Driver', render: (x) => h('button', { class: 'btn small ghost', onclick: () => ADMIN.userDialog(x.driver_user_id) }, x.driver_name) },
+          { label: 'Status', render: (x) => badge(x.status) },
+          { label: '', render: (x) => h('div', { class: 'row' },
+              h('button', { class: 'btn small', onclick: () => ADMIN.editDialog(`Edit ${x.vehicle_number}`, FIELDS, x, (d) => api(`/api/admin/vehicles/${x.vehicle_id}`, { method: 'PUT', body: d }).then((r) => (load(), r))) }, 'Edit'),
+              h('button', { class: 'btn small danger', onclick: async (e) => {
+                const b = e.currentTarget;
+                if (await CAB.confirmBox('Delete vehicle?', `Delete ${x.vehicle_number}?`, 'Delete', true)) act(b, () => api(`/api/admin/vehicles/${x.vehicle_id}`, { method: 'DELETE' }), load);
+              } }, 'Delete')) },
+        ], await api(`/api/admin/vehicles?q=${encodeURIComponent($('#q').value)}`), 'No vehicles found.');
+      }
+      $('#q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 250); });
+      load();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tickets · CabGo admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Support tickets</h1><p class="muted">Reply to passengers and drivers, and refund when the complaint is valid.</p></div>
+      <label class="field">Show <select id="status"><option value="OPEN">Open</option><option value="RESOLVED">Resolved</option><option value="">All</option></select></label></div>
+    <div id="list" class="stack"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['ADMIN'] });
+      const { api, $, h, fmt, badge, act } = CAB;
+      const cfg = await api('/api/config');
+      function resolver(t) {
+        const f = h('form', { class: 'form' },
+          h('label', { class: 'field' }, 'Reply', h('textarea', { name: 'admin_reply', required: true, minlength: 2, maxlength: 1000 })),
+          t.request_id ? h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'refund' }), 'Refund the paid fare for this booking') : null,
+          h('p', { class: 'form-error' }),
+          h('div', { class: 'row' },
+            cfg.ai_enabled ? h('button', { class: 'btn', type: 'button', onclick: (e) => act(e.currentTarget, async () => {
+              const s = await api(`/api/admin/tickets/${t.ticket_id}/suggest`, { method: 'POST' });
+              f.elements.admin_reply.value = s.reply;
+              if (f.elements.refund) f.elements.refund.checked = !!s.refund;
+              return { message: s.refund ? 'AI suggests a refund. Review before sending.' : 'Draft ready. Review before sending.' };
+            }) }, '✨ Suggest reply (AI)') : null,
+            h('span', { class: 'spacer' }), h('button', { class: 'btn primary', type: 'submit' }, 'Resolve')));
+        CAB.form(f, async (d) => {
+          CAB.toast((await api(`/api/admin/tickets/${t.ticket_id}`, { method: 'PUT', body: d })).message, 'ok');
+          load();
+        });
+        return f;
+      }
+      async function load() {
+        const s = $('#status').value;
+        const list = await api(`/api/admin/tickets${s ? `?status=${s}` : ''}`);
+        $('#list').replaceChildren(...(list.length ? list.map((t) =>
+          h('section', { class: 'card stack' },
+            h('div', { class: 'row' }, badge(t.status), h('b', { class: 'mono' }, `#${t.ticket_id} ${t.category}`), h('span', {}, `${t.user_name} (${t.user_role.toLowerCase()})`), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, fmt.date(t.created_at))),
+            t.request_id ? h('p', { class: 'muted', style: { margin: 0 } }, `Booking #${t.request_id}: ${t.pickup_location} → ${t.destination}`) : null,
+            h('p', { style: { margin: 0 } }, t.message),
+            t.status === 'OPEN' ? resolver(t) : h('p', { class: 'mono' }, `Reply by ${t.resolved_by_name || 'admin'} on ${fmt.date(t.resolved_at)}: ${t.admin_reply}`)))
+          : [h('div', { class: 'card empty' }, 'No tickets here.')]));
+      }
+      $('#status').addEventListener('change', load);
+      load();
+    })();
+  </script>
+</body>
+</html>

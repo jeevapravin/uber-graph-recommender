@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trips · CabGo admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Trips & bookings</h1><p class="muted">Monitor every booking and resolve stuck ones: start, complete, cancel (no fee) or refund.</p></div><button class="btn" id="export">Export CSV</button></div>
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <form class="filters" id="filters">
+      <label class="field">Search <input name="q" type="search" placeholder="Passenger, driver or area"></label>
+      <label class="field">From <input name="from" type="date"></label>
+      <label class="field">To <input name="to" type="date"></label>
+      <button class="btn" type="submit">Apply</button>
+    </form>
+    <div id="list"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['ADMIN'] });
+      const { api, $, h, fmt, badge, act } = CAB;
+      const STAGES = ['', 'SEARCHING', 'ACCEPTED', 'STARTED', 'COMPLETED', 'CANCELLED'];
+      let stage = new URLSearchParams(location.search).get('stage') || '';
+      const f = $('#filters');
+      const tabs = () => $('#tabs').replaceChildren(...STAGES.map((s) => h('button', { role: 'tab', 'aria-selected': String(s === stage), onclick: () => { stage = s; tabs(); load(); } }, s || 'ALL')));
+      const query = () => {
+        const p = new URLSearchParams();
+        for (const k of ['q', 'from', 'to']) if (f.elements[k].value) p.set(k, f.elements[k].value);
+        if (stage) p.set('stage', stage);
+        return p.toString();
+      };
+      const run = (r, verb, confirmText) => async (e) => {
+        const b = e.currentTarget;
+        if (confirmText && !(await CAB.confirmBox(`${verb} booking #${r.request_id}?`, confirmText, verb, verb === 'Cancel'))) return;
+        act(b, () => api(`/api/admin/bookings/${r.request_id}/${verb.toLowerCase()}`, { method: 'POST' }), load);
+      };
+      async function load() {
+        const rows = await api(`/api/admin/bookings?${query()}`);
+        CAB.table($('#list'), [
+          { label: '#', render: (r) => h('span', { class: 'mono' }, r.request_id) },
+          { label: 'When', render: (r) => fmt.date(r.requested_at) },
+          { label: 'Route', render: (r) => h('div', {}, h('div', {}, r.pickup_location), h('div', { class: 'muted' }, '→ ' + r.destination)) },
+          { label: 'Passenger', key: 'passenger_name' },
+          { label: 'Driver', render: (r) => r.driver_name || '—' },
+          { label: 'Type', key: 'vehicle_type' },
+          { label: 'Fare', class: 'num', render: (r) => fmt.money(r.fare ?? r.estimated_fare) },
+          { label: 'Stage', render: (r) => badge(r.stage) },
+          { label: 'Payment', render: (r) => badge(r.payment_status) },
+          { label: '', render: (r) => h('div', { class: 'row' },
+              r.stage === 'ACCEPTED' ? h('button', { class: 'btn small', onclick: run(r, 'Start') }, 'Start') : null,
+              r.stage === 'STARTED' ? h('button', { class: 'btn small primary', onclick: run(r, 'Complete') }, 'Complete') : null,
+              ['SEARCHING', 'ACCEPTED', 'STARTED'].includes(r.stage) ? h('button', { class: 'btn small danger', onclick: run(r, 'Cancel', 'The passenger is not charged.') }, 'Cancel') : null,
+              r.payment_status === 'PAID' ? h('button', { class: 'btn small', onclick: run(r, 'Refund', `Refund ${fmt.money(r.payment_amount)} to ${r.passenger_name}?`) }, 'Refund') : null,
+              r.payment_id ? h('a', { class: 'btn small ghost', href: `/receipt.html?trip=${r.trip_id}` }, 'Receipt') : null) },
+        ], rows, 'No bookings match.');
+      }
+      $('#export').hidden = !user.permissions.includes('VIEW_REPORTS');
+      $('#export').addEventListener('click', (e) => act(e.currentTarget, () => CAB.download(`/api/admin/bookings/export?${query()}`, 'bookings.csv')));
+      f.addEventListener('submit', (e) => { e.preventDefault(); load(); });
+      tabs();
+      CAB.poll(load, 10000);
+    })();
+  </script>
+</body>
+</html>
