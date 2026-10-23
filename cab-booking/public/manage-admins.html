@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Administrators · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Administrators</h1><p class="muted">Create, update, activate, deactivate or delete admins.</p></div><button class="btn primary" id="add">New admin</button></div>
+    <div id="list"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/admin.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['SUPER_ADMIN'] });
+      const { api, $, h, fmt, badge, act } = CAB;
+      const PERMS = await api('/api/superadmin/permissions');
+      const base = [
+        { name: 'name', label: 'Full name', required: true, minlength: 2, maxlength: 100 },
+        { name: 'mobile', label: 'Mobile', required: true, pattern: '[0-9]{10}', maxlength: 10 },
+      ];
+      function create() {
+        const fields = [...base, { name: 'email', label: 'Email', type: 'email', required: true },
+          { name: 'password', label: 'Password', type: 'password', required: true, minlength: 6, help: 'min 6 characters' },
+          ...PERMS.map((p) => ({ name: `perm_${p}`, label: p.replace(/_/g, ' ').toLowerCase(), type: 'checkbox' }))];
+        ADMIN.editDialog('New administrator', fields, { perm_VIEW_REPORTS: true }, async (d) => {
+          const permissions = PERMS.filter((p) => d[`perm_${p}`]);
+          const r = await api('/api/superadmin/admins', { method: 'POST', body: { name: d.name, email: d.email, mobile: d.mobile, password: d.password, permissions } });
+          load();
+          return { message: 'Administrator created', ...r };
+        });
+      }
+      function edit(a) {
+        ADMIN.editDialog(`Edit ${a.name}`, [...base, { name: 'status', label: 'Status', options: ['ACTIVE', 'INACTIVE'] },
+          { name: 'password', label: 'New password', type: 'password', minlength: 6, help: 'leave blank to keep' }], a, async (d) => {
+          if (!d.password) delete d.password;
+          const r = await api(`/api/superadmin/admins/${a.user_id}`, { method: 'PUT', body: d });
+          load();
+          return r;
+        });
+      }
+      async function load() {
+        CAB.table($('#list'), [
+          { label: 'Name', render: (a) => h('div', {}, h('b', {}, a.name), h('div', { class: 'muted' }, a.email)) },
+          { label: 'Mobile', render: (a) => h('span', { class: 'mono' }, a.mobile) },
+          { label: 'Permissions', render: (a) => h('div', { class: 'row', style: { gap: '4px' } }, a.permissions.length ? a.permissions.map((p) => h('span', { class: 'role-chip' }, p.replace('MANAGE_', '').replace('VIEW_', ''))) : h('span', { class: 'muted' }, 'none')) },
+          { label: 'Created', render: (a) => fmt.day(a.created_at) },
+          { label: 'Last login', render: (a) => fmt.date(a.last_login) },
+          { label: 'Status', render: (a) => badge(a.status) },
+          { label: '', render: (a) => h('div', { class: 'row' },
+              h('button', { class: 'btn small', onclick: () => edit(a) }, 'Edit'),
+              h('a', { class: 'btn small', href: `/permissions.html?admin=${a.user_id}` }, 'Permissions'),
+              h('button', { class: 'btn small', onclick: (e) => act(e.currentTarget, () => api(`/api/superadmin/admins/${a.user_id}`, { method: 'PUT', body: { name: a.name, mobile: a.mobile, status: a.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' } }), load) }, a.status === 'ACTIVE' ? 'Deactivate' : 'Activate'),
+              h('button', { class: 'btn small danger', onclick: async (e) => {
+                const b = e.currentTarget;
+                if (await CAB.confirmBox('Delete administrator?', `Delete ${a.name}? Their log entries stay, without a name.`, 'Delete', true)) act(b, () => api(`/api/superadmin/admins/${a.user_id}`, { method: 'DELETE' }), load);
+              } }, 'Delete')) },
+        ], await api('/api/superadmin/admins'), 'No administrators yet.');
+      }
+      $('#add').addEventListener('click', create);
+      load();
+    })();
+  </script>
+</body>
+</html>

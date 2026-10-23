@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Permissions · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Admin permissions</h1><p class="muted">Tick a box to grant it; each change saves at once. The Super Admin always has every permission.</p></div></div>
+    <div id="matrix"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['SUPER_ADMIN'] });
+      const { api, $, h, badge, toast } = CAB;
+      const PERMS = await api('/api/superadmin/permissions');
+      const focus = Number(new URLSearchParams(location.search).get('admin'));
+      async function load() {
+        const admins = await api('/api/superadmin/admins');
+        CAB.table($('#matrix'), [
+          { label: 'Admin', render: (a) => h('div', {}, h('b', {}, a.name), ' ', badge(a.status)) },
+          ...PERMS.map((p) => ({
+            label: p.replace(/_/g, ' '),
+            render: (a) => h('input', {
+              type: 'checkbox', 'aria-label': `${p} for ${a.name}`, checked: a.permissions.includes(p), style: { width: '18px', height: '18px', accentColor: 'var(--accent)' },
+              onchange: async (e) => {
+                const box = e.currentTarget;
+                const next = box.checked ? [...a.permissions, p] : a.permissions.filter((x) => x !== p);
+                box.disabled = true;
+                try {
+                  a.permissions = (await api(`/api/superadmin/admins/${a.user_id}/permissions`, { method: 'PUT', body: { permissions: next } })).permissions;
+                  toast(`${a.name}: ${box.checked ? 'granted' : 'removed'} ${p.replace(/_/g, ' ').toLowerCase()}`, 'ok');
+                } catch (ex) {
+                  box.checked = !box.checked;
+                  toast(ex.message, 'bad');
+                } finally {
+                  box.disabled = false;
+                }
+              },
+            }),
+          })),
+        ], admins, 'No administrators yet.');
+        if (focus) [...$('#matrix').querySelectorAll('tbody tr')].forEach((tr, i) => admins[i].user_id === focus && (tr.style.outline = '2px solid var(--accent)'));
+      }
+      load();
+    })();
+  </script>
+</body>
+</html>

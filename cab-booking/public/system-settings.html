@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System settings · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>System settings</h1><p class="muted" id="sub"></p></div></div>
+    <section class="card" style="max-width:760px">
+      <form class="form" id="settings"></form>
+    </section>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['ADMIN'] });
+      const { api, $, h, fmt } = CAB;
+      const canEdit = user.role === 'SUPER_ADMIN';
+      $('#sub').textContent = canEdit ? 'Changes apply immediately to new bookings and to the whole site.' : 'Read-only: only the Super Admin can change settings.';
+      const INPUT = {
+        app_name: { maxlength: 40, minlength: 2 },
+        avg_speed_kmph: { type: 'number', min: 5, max: 120, step: 1 },
+        road_factor: { type: 'number', min: 1, max: 3, step: 0.05 },
+        platform_commission_pct: { type: 'number', min: 0, max: 50, step: 1 },
+        surge_multiplier: { type: 'number', min: 1, max: 3, step: 0.1 },
+        allow_registrations: { bool: true },
+        maintenance_mode: { bool: true },
+      };
+      const rows = await api('/api/admin/settings');
+      const f = $('#settings');
+      f.append(...rows.map((s) => {
+        const spec = INPUT[s.setting_key] || {};
+        const label = s.setting_key.replace(/_/g, ' ');
+        if (spec.bool) {
+          return h('label', { class: 'check' }, h('input', { type: 'checkbox', name: s.setting_key, checked: s.setting_value === 'true', disabled: !canEdit }),
+            h('span', {}, h('b', {}, label), ' ', h('span', { class: 'muted' }, `· ${s.description}`)));
+        }
+        return h('label', { class: 'field' }, h('span', {}, label, ' ', h('small', {}, `${s.description} · updated ${fmt.date(s.updated_at)}`)),
+          h('input', { name: s.setting_key, value: s.setting_value, required: true, disabled: !canEdit, ...spec }));
+      }));
+      if (canEdit) {
+        f.append(h('p', { class: 'form-error', role: 'alert' }), h('button', { class: 'btn primary', type: 'submit' }, 'Save settings'));
+        CAB.form(f, async (d) => {
+          const settings = Object.fromEntries(Object.entries(d).map(([k, v]) => [k, typeof v === 'boolean' ? String(v) : v]));
+          CAB.toast((await api('/api/superadmin/settings', { method: 'PUT', body: { settings } })).message, 'ok');
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

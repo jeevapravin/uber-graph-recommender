@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System logs · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>System logs</h1><p class="muted" id="sub"></p></div><button class="btn" id="export" hidden>Export CSV</button></div>
+    <form class="filters" id="filters">
+      <label class="field">Search <input name="q" type="search" placeholder="Text, user, email or IP"></label>
+      <label class="field">Action <select name="action"><option value="">All</option></select></label>
+      <label class="field">Role <select name="role"><option value="">All</option><option>PASSENGER</option><option>DRIVER</option><option>ADMIN</option><option>SUPER_ADMIN</option></select></label>
+      <label class="field" data-full>From <input name="from" type="date"></label>
+      <label class="field" data-full>To <input name="to" type="date"></label>
+      <button class="btn" type="submit">Filter</button>
+    </form>
+    <div id="list"></div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script>
+    (async () => {
+      const user = await CAB.page({ roles: ['ADMIN'] });
+      const { api, $, $$, h, fmt, badge, act } = CAB;
+      const full = user.role === 'SUPER_ADMIN';
+      const base = full ? '/api/superadmin/logs' : '/api/admin/logs';
+      $('#sub').textContent = full ? 'Every action in the system, with filters and CSV export.' : 'Limited view: the last 7 days, without Super Admin actions.';
+      $$('[data-full]').forEach((el) => (el.hidden = !full));
+      $('#export').hidden = !full;
+      const f = $('#filters');
+      const actions = await api('/api/admin/log-actions');
+      f.elements.action.append(...actions.map((a) => h('option', {}, a)));
+      const qs = () => new URLSearchParams([...new FormData(f)].filter(([, v]) => v)).toString();
+      async function load() {
+        const rows = await api(`${base}?${qs()}`);
+        CAB.table($('#list'), [
+          { label: 'When', render: (r) => h('span', { class: 'mono' }, fmt.date(r.created_at)) },
+          { label: 'User', render: (r) => (r.name ? h('div', {}, r.name, h('div', { class: 'muted' }, r.email)) : h('span', { class: 'muted' }, 'system / guest')) },
+          { label: 'Role', render: (r) => (r.role ? h('span', { class: 'role-chip' }, r.role) : '—') },
+          { label: 'Action', render: (r) => (r.action === 'SOS' ? badge('SOS') : h('span', { class: 'mono' }, r.action)) },
+          { label: 'Details', key: 'description' },
+          { label: 'IP', render: (r) => h('span', { class: 'mono muted' }, r.ip_address || '—') },
+        ], rows, 'No log entries match.');
+      }
+      f.addEventListener('submit', (e) => { e.preventDefault(); load(); });
+      $('#export').addEventListener('click', (e) => act(e.currentTarget, () => CAB.download(`${base}?${qs()}&format=csv`, 'system_logs.csv')));
+      load();
+    })();
+  </script>
+</body>
+</html>

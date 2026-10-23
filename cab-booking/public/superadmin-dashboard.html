@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Super Admin · CabGo</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Super Admin</h1><p class="muted">Administrators, permissions, system settings and the full log.</p></div>
+      <div class="row"><a class="btn primary" href="/manage-admins.html">Manage admins</a><a class="btn" href="/admin-dashboard.html">Operations view</a></div></div>
+    <div class="stats" id="stats"></div>
+    <div class="grid grid-2">
+      <section class="card"><div class="card-head"><h2>Administrators</h2><a href="/permissions.html">Permissions →</a></div><div id="admins"></div></section>
+      <section class="card"><div class="card-head"><h2>Settings</h2><a href="/system-settings.html">Edit →</a></div><dl class="kv" id="settings"></dl></section>
+    </div>
+    <section class="card" style="margin-top:16px"><div class="card-head"><h2>Latest system activity</h2><a href="/system-logs.html">Full log →</a></div><div id="logs"></div></section>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/admin.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['SUPER_ADMIN'] });
+      const { api, $, h, fmt, badge } = CAB;
+      const [sum, admins, settings, logs] = await Promise.all([api('/api/admin/summary'), api('/api/superadmin/admins'), api('/api/admin/settings'), api('/api/superadmin/logs')]);
+      const c = sum.counts;
+      const today = new Date().toLocaleDateString('en-CA');
+      $('#stats').append(
+        ADMIN.stat('Admins', fmt.num(admins.length), `${admins.filter((a) => a.status === 'ACTIVE').length} active`),
+        ADMIN.stat('Passengers', fmt.num(c.passengers)), ADMIN.stat('Drivers', fmt.num(c.drivers), `${c.pending_drivers} pending`),
+        ADMIN.stat('Revenue', fmt.money(c.total_revenue)),
+        ADMIN.stat('Log entries today', fmt.num(logs.filter((l) => String(l.created_at).startsWith(today)).length)),
+        ADMIN.stat('SOS (24h)', fmt.num(sum.sos.length), null, sum.sos.length > 0));
+      CAB.table($('#admins'), [
+        { label: 'Name', key: 'name' }, { label: 'Status', render: (a) => badge(a.status) },
+        { label: 'Permissions', class: 'num', render: (a) => `${a.permissions.length} / 7` }, { label: 'Last login', render: (a) => fmt.date(a.last_login) },
+      ], admins, 'No administrators yet.');
+      $('#settings').append(...settings.flatMap((s) => [h('dt', {}, s.setting_key.replace(/_/g, ' ')), h('dd', { class: 'mono' }, s.setting_value)]));
+      CAB.table($('#logs'), [
+        { label: 'When', render: (r) => fmt.date(r.created_at) }, { label: 'Who', render: (r) => r.name || 'system' },
+        { label: 'Action', render: (r) => h('span', { class: 'mono' }, r.action) }, { label: 'Details', key: 'description' },
+      ], logs.slice(0, 10));
+    })();
+  </script>
+</body>
+</html>
