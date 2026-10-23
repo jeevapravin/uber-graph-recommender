@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fares & areas · CabGo admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/figures/iso.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Fares, service areas & promos</h1><p class="muted">Changes apply to new bookings; existing bookings keep their fare.</p></div><button class="btn primary" id="add">Add</button></div>
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <div class="split">
+      <div id="list"></div>
+      <div id="meter" class="figure-slot" aria-label="Taximeter previewing a fare rule"></div>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/admin.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['ADMIN'] });
+      const { api, $, h, fmt, badge } = CAB;
+      const meter = CAB.figure('taximeter', $('#meter'));
+      const money = { type: 'number', min: 0, max: 10000, step: 0.01, required: true };
+      const TABS = {
+        fares: {
+          label: 'Fare rules', url: '/api/admin/fares', id: 'fare_id',
+          fields: (edit) => [
+            edit ? null : { name: 'vehicle_type', label: 'Vehicle type', options: ['BIKE', 'AUTO', 'MINI', 'SEDAN', 'SUV'], required: true },
+            { name: 'base_fare', label: 'Base fare ₹', ...money }, { name: 'per_km_rate', label: 'Per km ₹', ...money },
+            { name: 'per_minute_rate', label: 'Per minute ₹', ...money }, { name: 'cancellation_fee', label: 'Cancellation fee ₹', ...money },
+            { name: 'status', label: 'Status', options: ['ACTIVE', 'INACTIVE'] },
+          ].filter(Boolean),
+          cols: [
+            { label: 'Type', render: (r) => h('b', { class: 'mono' }, r.vehicle_type) },
+            { label: 'Base', class: 'num', render: (r) => fmt.money(r.base_fare) },
+            { label: 'Per km', class: 'num', render: (r) => fmt.money(r.per_km_rate) },
+            { label: 'Per min', class: 'num', render: (r) => fmt.money(r.per_minute_rate) },
+            { label: 'Cancel fee', class: 'num', render: (r) => fmt.money(r.cancellation_fee) },
+            { label: '10 km / 25 min', class: 'num', render: (r) => fmt.money(Math.round(r.base_fare + r.per_km_rate * 10 + r.per_minute_rate * 25)) },
+            { label: 'Status', render: (r) => badge(r.status) },
+          ],
+          // hovering a rule shows a sample 10 km / 25 min trip on the meter
+          preview: (r) => ({ total: Math.round(r.base_fare + r.per_km_rate * 10 + r.per_minute_rate * 25), km: 10, min: 25, base: r.base_fare, perKm: r.per_km_rate, perMin: r.per_minute_rate, type: r.vehicle_type }),
+        },
+        areas: {
+          label: 'Service areas', url: '/api/admin/areas', id: 'area_id',
+          fields: () => [
+            { name: 'area_name', label: 'Area', required: true, minlength: 2, maxlength: 80 }, { name: 'city', label: 'City', required: true, maxlength: 60 },
+            { name: 'state', label: 'State', required: true, maxlength: 60 },
+            { name: 'latitude', label: 'Latitude', type: 'number', step: 0.000001, min: -90, max: 90, required: true },
+            { name: 'longitude', label: 'Longitude', type: 'number', step: 0.000001, min: -180, max: 180, required: true },
+            { name: 'status', label: 'Status', options: ['ACTIVE', 'INACTIVE'] },
+          ],
+          cols: [
+            { label: 'Area', render: (r) => h('b', {}, r.area_name) }, { label: 'City', key: 'city' }, { label: 'State', key: 'state' },
+            { label: 'Lat, Lng', render: (r) => h('span', { class: 'mono' }, `${r.latitude}, ${r.longitude}`) }, { label: 'Status', render: (r) => badge(r.status) },
+          ],
+        },
+        promos: {
+          label: 'Promo codes', url: '/api/admin/promos', id: 'promo_id',
+          fields: () => [
+            { name: 'code', label: 'Code', required: true, pattern: '[A-Za-z0-9]{3,20}', maxlength: 20 },
+            { name: 'discount_pct', label: 'Discount %', type: 'number', min: 1, max: 90, required: true },
+            { name: 'max_discount', label: 'Max discount ₹', type: 'number', min: 1, max: 10000, required: true },
+            { name: 'valid_until', label: 'Valid until', type: 'date', required: true },
+            { name: 'usage_limit', label: 'Usage limit', type: 'number', min: 1, required: true },
+            { name: 'status', label: 'Status', options: ['ACTIVE', 'INACTIVE'] },
+          ],
+          cols: [
+            { label: 'Code', render: (r) => h('b', { class: 'mono' }, r.code) }, { label: 'Off', class: 'num', render: (r) => `${r.discount_pct}%` },
+            { label: 'Max', class: 'num', render: (r) => fmt.money(r.max_discount) }, { label: 'Valid until', render: (r) => fmt.day(r.valid_until) },
+            { label: 'Used', class: 'num', render: (r) => `${r.used_count} / ${r.usage_limit}` }, { label: 'Status', render: (r) => badge(r.status) },
+          ],
+        },
+      };
+      let tab = 'fares';
+      const tabs = () => $('#tabs').replaceChildren(...Object.entries(TABS).map(([k, t]) => h('button', { role: 'tab', 'aria-selected': String(k === tab), onclick: () => { tab = k; tabs(); load(); } }, t.label)));
+      const edit = (row) => {
+        const t = TABS[tab];
+        const values = row ? { ...row, valid_until: row.valid_until ? String(row.valid_until).slice(0, 10) : undefined } : { status: 'ACTIVE' };
+        ADMIN.editDialog(row ? `Edit ${t.label.toLowerCase()}` : `Add ${t.label.toLowerCase().replace(/s$/, '')}`, t.fields(!!row), values, async (d) => {
+          const r = await api(row ? `${t.url}/${row[t.id]}` : t.url, { method: row ? 'PUT' : 'POST', body: d });
+          load();
+          return r;
+        });
+      };
+      async function load() {
+        const t = TABS[tab];
+        const rows = await api(t.url);
+        $('#meter').hidden = !t.preview;
+        CAB.table($('#list'), [...t.cols, { label: '', render: (r) => h('button', { class: 'btn small', onclick: () => edit(r) }, 'Edit') }], rows);
+        if (t.preview) {
+          const m = await meter;
+          [...$('#list').querySelectorAll('tbody tr')].forEach((tr, i) => tr.addEventListener('mouseenter', () => m.set(t.preview(rows[i]))));
+          if (rows[0]) m.set(t.preview(rows[0]));
+        }
+      }
+      $('#add').addEventListener('click', () => edit(null));
+      tabs();
+      load();
+    })();
+  </script>
+</body>
+</html>

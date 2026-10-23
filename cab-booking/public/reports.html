@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reports · CabGo admin</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header id="nav"></header>
+  <main class="wrap">
+    <div class="page-head"><div><h1>Reports</h1><p class="muted" id="range"></p></div>
+      <form class="row" id="filters" style="align-items:end">
+        <label class="field">From <input name="from" type="date"></label>
+        <label class="field">To <input name="to" type="date"></label>
+        <button class="btn" type="submit">Apply</button>
+        <button class="btn" type="button" id="export">Export bookings CSV</button>
+      </form>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="grid grid-2">
+      <section class="card"><h2>Revenue by day</h2><div class="bars" id="byDay"></div></section>
+      <section class="card"><h2>By vehicle type</h2><div class="bars" id="byType"></div></section>
+      <section class="card"><h2>Top drivers</h2><div id="drivers"></div></section>
+      <section class="card"><h2>Top passengers</h2><div id="passengers"></div></section>
+      <section class="card"><h2>Users</h2><div id="users"></div></section>
+    </div>
+  </main>
+  <script src="/js/common.js"></script>
+  <script src="/js/admin.js"></script>
+  <script>
+    (async () => {
+      await CAB.page({ roles: ['ADMIN'] });
+      const { api, $, h, fmt, act } = CAB;
+      const f = $('#filters');
+      const qs = () => new URLSearchParams([...new FormData(f)].filter(([, v]) => v)).toString();
+      function bars(el, rows, label, value, fmtValue) {
+        const max = Math.max(1, ...rows.map(value));
+        el.replaceChildren(...(rows.length ? rows.map((r) => {
+          const fill = h('div', { class: 'bar-fill' });
+          requestAnimationFrame(() => requestAnimationFrame(() => (fill.style.width = `${(value(r) / max) * 100}%`)));
+          return h('div', { class: 'bar' }, h('span', { class: 'muted' }, label(r)), h('div', { class: 'bar-track' }, fill), h('span', {}, fmtValue(r)));
+        }) : [h('p', { class: 'muted' }, 'No data in this range.')]));
+      }
+      async function load() {
+        const r = await api(`/api/admin/reports?${qs()}`);
+        f.elements.from.value = r.from;
+        f.elements.to.value = r.to;
+        $('#range').textContent = `${fmt.day(r.from)} – ${fmt.day(r.to)}`;
+        const t = r.totals;
+        const rate = t.bookings ? Math.round((t.completed / t.bookings) * 100) : 0;
+        $('#stats').replaceChildren(
+          ADMIN.stat('Bookings', fmt.num(t.bookings), `${t.open || 0} still open`),
+          ADMIN.stat('Completed', fmt.num(t.completed), `${rate}% completion`),
+          ADMIN.stat('Cancelled', fmt.num(t.cancelled)),
+          ADMIN.stat('Fares', fmt.money(t.fares), `avg ${fmt.money(Math.round(t.avg_fare))}`),
+          ADMIN.stat('Collected', fmt.money(t.collected), `${fmt.money(t.outstanding)} outstanding`),
+          ADMIN.stat('Refunded', fmt.money(t.refunded)),
+          ADMIN.stat('Distance', fmt.km(t.km)));
+        bars($('#byDay'), r.byDay, (d) => fmt.day(d.day).replace(/ \d{4}$/, ''), (d) => d.revenue, (d) => fmt.money(d.revenue));
+        bars($('#byType'), r.byType, (d) => d.vehicle_type, (d) => d.revenue, (d) => `${fmt.money(d.revenue)} · ${d.completed}/${d.bookings}`);
+        CAB.table($('#drivers'), [{ label: 'Driver', key: 'name' }, { label: 'Trips', class: 'num', key: 'trips' }, { label: 'Km', class: 'num', render: (x) => fmt.num(x.km, 1) }, { label: 'Revenue', class: 'num', render: (x) => fmt.money(x.revenue) }, { label: 'Rating', render: (x) => (x.rating ? `★ ${x.rating}` : '—') }], r.topDrivers);
+        CAB.table($('#passengers'), [{ label: 'Passenger', key: 'name' }, { label: 'Trips', class: 'num', key: 'trips' }, { label: 'Spent', class: 'num', render: (x) => fmt.money(x.spent) }], r.topPassengers);
+        CAB.table($('#users'), [{ label: 'Role', key: 'role' }, { label: 'Total', class: 'num', key: 'total' }, { label: 'New in range', class: 'num', render: (x) => fmt.num(x.new_in_range) }], r.users);
+      }
+      f.addEventListener('submit', (e) => { e.preventDefault(); load(); });
+      $('#export').addEventListener('click', (e) => act(e.currentTarget, () => CAB.download(`/api/admin/bookings/export?${qs()}`, 'bookings.csv')));
+      load();
+    })();
+  </script>
+</body>
+</html>
