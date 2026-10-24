@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Roof sign preview</title>
+<link rel="stylesheet" href="../../public/figures/iso.css">
+<style>*{box-sizing:border-box}body{margin:0;background:#0b0b0b;font:14px system-ui}main{width:min(480px,100% - 32px);margin:48px auto}</style></head>
+<body><main><div id="fig"></div></main>
+<script src="../../public/figures/taxi-sign.js"></script>
+<script>
+var q = new URLSearchParams(location.search);
+var el = document.getElementById("fig");
+var fig = CabFig.taxiSign.mount(el, { theme: "dark", fig: "Fig 2" });
+var state = q.get("state") || "off";
+fig.set(state === "on", { disabled: state === "locked", note: state === "locked" ? "awaiting approval" : "" });
+var on = state === "on";
+el.addEventListener("cabfig:toggle", function () { on = !on; fig.set(on); });
+</script></body></html>
