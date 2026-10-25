@@ -23,7 +23,13 @@ const MIME = {
 const gzipCache = new Map(); // shortcut: unbounded, fine for a fixed set of static files
 
 function serveStatic(pathname, req, res) {
-  const file = path.normalize(path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : decodeURIComponent(pathname)));
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return sendJson(res, 400, { error: 'Bad URL' }); // a malformed %-escape used to crash the whole server
+  }
+  const file = path.normalize(path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : decoded));
   if (!file.startsWith(PUBLIC_DIR + path.sep)) return sendJson(res, 403, { error: 'Forbidden' });
   fs.readFile(file, (err, data) => {
     if (err) {
@@ -65,19 +71,21 @@ async function handleApi(req, res, url) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  if (!url.pathname.startsWith('/api/')) {
-    if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed' });
-    return serveStatic(url.pathname, req, res);
-  }
+  let url;
   try {
+    url = new URL(req.url, 'http://localhost');
+    if (!url.pathname.startsWith('/api/')) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed' });
+      return serveStatic(url.pathname, req, res);
+    }
     await handleApi(req, res, url);
   } catch (err) {
+    if (res.headersSent) return res.destroy();
     if (err instanceof HttpError) return sendJson(res, err.status, { error: err.message });
     if (err.code === 'ER_DUP_ENTRY') return sendJson(res, 409, { error: 'That record already exists' });
     if (err.code === 'ER_ROW_IS_REFERENCED_2') return sendJson(res, 409, { error: 'This record is in use by other records' });
     if (err.code === 'ER_CHECK_CONSTRAINT_VIOLATED') return sendJson(res, 400, { error: 'A value breaks a database rule' });
-    console.error(req.method, url.pathname, err);
+    console.error(req.method, req.url, err);
     sendJson(res, 500, { error: 'Something went wrong on the server' });
   }
 });
