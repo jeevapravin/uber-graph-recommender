@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Trip route</title>
+<link rel="stylesheet" href="../../public/figures/iso.css">
+<style>*{box-sizing:border-box}body{margin:0;background:#f2f2ef;color:#888;font:14px/1.6 system-ui,sans-serif}main{width:min(640px,100% - 32px);margin:48px auto}</style></head>
+<body><main><div id="fig"></div></main>
+<script src="../../public/figures/trip-route.js"></script>
+<script>window.__trip = CabFig.tripRoute.mount(document.getElementById("fig"), { theme: "light" });
+const s = new URLSearchParams(location.search).get("stage"); if (s) __trip.set(s, { pickup: "T. Nagar", destination: "Chennai Airport" });</script>
+</body></html>
