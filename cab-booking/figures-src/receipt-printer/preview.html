@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Receipt printer</title>
+<link rel="stylesheet" href="../../public/figures/iso.css">
+<style>*{box-sizing:border-box}body{margin:0;background:var(--anatomy-page);font:14px/1.6 system-ui,sans-serif}.wrap{width:min(480px,100% - 32px);margin:48px auto}</style></head>
+<body class="iso" data-theme="dark"><div class="wrap" id="fig"></div>
+<script src="../../public/figures/receipt-printer.js"></script>
+<script>
+const fig = CabFig.receiptPrinter.mount(document.getElementById("fig"), { theme: "dark" });
+const want = location.hash.slice(1);
+const lines = [{ label: "Base fare", amount: 60 }, { label: "Distance 7.2 km × ₹15", amount: 108 }, { label: "Time 17 min", amount: 34 }, { label: "Surge ×1.2", amount: 40 }, { label: "Promo CAB20", amount: -24 }];
+if (want) fig.set(want, { amount: 218, method: "UPI", lines });
+window.fig = fig;
+</script></body></html>
