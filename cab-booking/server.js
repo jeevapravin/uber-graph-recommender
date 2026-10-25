@@ -2,6 +2,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { HttpError, match, readBody, sendJson } = require('./src/http');
 const { currentUser, authorize } = require('./src/auth');
 const { seed } = require('./src/seed');
@@ -19,7 +20,9 @@ const MIME = {
   '.json': 'application/json',
 };
 
-function serveStatic(pathname, res) {
+const gzipCache = new Map(); // shortcut: unbounded, fine for a fixed set of static files
+
+function serveStatic(pathname, req, res) {
   const file = path.normalize(path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : decodeURIComponent(pathname)));
   if (!file.startsWith(PUBLIC_DIR + path.sep)) return sendJson(res, 403, { error: 'Forbidden' });
   fs.readFile(file, (err, data) => {
@@ -27,7 +30,14 @@ function serveStatic(pathname, res) {
       res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end('<h1>404 Not Found</h1><p><a href="/">Home</a></p>');
     }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+    const type = MIME[path.extname(file)] || 'application/octet-stream';
+    if (/text|svg|json/.test(type) && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
+      const key = `${file}:${data.length}`;
+      if (!gzipCache.has(key)) gzipCache.set(key, zlib.gzipSync(data));
+      res.writeHead(200, { 'Content-Type': type, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+      return res.end(gzipCache.get(key));
+    }
+    res.writeHead(200, { 'Content-Type': type });
     res.end(data);
   });
 }
@@ -58,7 +68,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (!url.pathname.startsWith('/api/')) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'Method not allowed' });
-    return serveStatic(url.pathname, res);
+    return serveStatic(url.pathname, req, res);
   }
   try {
     await handleApi(req, res, url);
