@@ -39,6 +39,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; } /* classes like .btn/.split set display, which would otherwise beat the hidden attribute */
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 var(--sans); min-height: 100vh; }
 a { color: var(--strong); text-underline-offset: 3px; }

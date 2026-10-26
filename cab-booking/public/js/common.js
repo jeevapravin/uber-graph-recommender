@@ -2,6 +2,14 @@
 (function () {
   'use strict';
 
+  // append/replaceChildren render null as the text "null"; drop empty children so `cond ? node : null` works everywhere
+  for (const name of ['append', 'replaceChildren']) {
+    const native = Element.prototype[name];
+    Element.prototype[name] = function (...kids) {
+      return native.apply(this, kids.filter((k) => k !== null && k !== undefined && k !== false));
+    };
+  }
+
   // ---------- session (token + user in localStorage) ----------
   const store = {
     get(k) {
