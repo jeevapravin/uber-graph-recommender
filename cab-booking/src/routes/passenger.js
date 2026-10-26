@@ -94,10 +94,16 @@ route('POST', '/api/passenger/bookings', async (ctx) => {
   return { created: true, ...result };
 }, P);
 
-// the latest booking, whatever its state (the active-trip page shows completed/cancelled ones too)
+// the booking the active-trip page follows: an open one first, else one still unpaid, else one from the last
+// 6 hours (so the passenger can pay and rate it); older finished trips belong in the history
 route('GET', '/api/passenger/bookings/current', async (ctx) => {
   const pid = await passengerId(ctx.user);
-  const [row] = withStage(await q(`${BOOKING_SELECT} WHERE r.passenger_id = ? ORDER BY r.request_id DESC LIMIT 1`, [pid]));
+  const [row] = withStage(await q(
+    `${BOOKING_SELECT} WHERE r.passenger_id = ?
+       AND (r.status IN ('REQUESTED','ACCEPTED') OR pay.payment_status = 'PENDING' OR r.requested_at >= NOW() - INTERVAL 6 HOUR)
+     ORDER BY r.status IN ('REQUESTED','ACCEPTED') DESC, pay.payment_status = 'PENDING' DESC, r.request_id DESC LIMIT 1`,
+    [pid],
+  ));
   return { booking: row || null };
 }, P);
 
