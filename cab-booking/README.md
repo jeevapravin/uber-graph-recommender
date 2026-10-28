@@ -31,7 +31,7 @@ The login page has one-click buttons for each.
 ### Tests
 
 ```sh
-docker compose exec app node --test test/   # fare unit tests + full API flow for all four roles
+docker compose exec app node --test   # fare unit tests + full API flow for all four roles
 ```
 
 ## What it does

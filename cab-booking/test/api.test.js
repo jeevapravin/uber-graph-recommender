@@ -1,5 +1,5 @@
 // End-to-end API flow against a running server (seeded DB):
-//   docker compose exec app node --test test/        (or BASE_URL=http://localhost:3000 node --test test/)
+//   docker compose exec app node --test        (or BASE_URL=http://localhost:3000 node --test)
 const test = require('node:test');
 const assert = require('node:assert');
 
