@@ -1,0 +1,22 @@
+name: cab-booking
+
+on:
+  push:
+    paths: ["cab-booking/**", ".github/workflows/cab-booking.yml"]
+  pull_request:
+    paths: ["cab-booking/**", ".github/workflows/cab-booking.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cab-booking
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build --wait
+      # the app has no healthcheck, so wait for it to answer before the API test hits it
+      - run: curl -fsS --retry 30 --retry-delay 2 --retry-all-errors -o /dev/null http://localhost:3000/
+      - run: docker compose exec -T app node --test
+      - if: failure()
+        run: docker compose logs
