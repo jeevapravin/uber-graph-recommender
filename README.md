@@ -1,65 +1,71 @@
-# Uber Spatial ETA & Routing Engine 🚗
+# CabGo: Online Cab Booking System
 
-A production-grade, asynchronous spatial routing platform. This system calculates exact street-network distances using OpenStreetMap data and predicts arrival times using an ensemble Machine Learning model, all orchestrated through a distributed asynchronous queue.
+Web Technology assignment: HTML/CSS, JavaScript + DOM, AJAX/Fetch, Node.js and MySQL.
+No React, Angular, Vue or Express: the server is Node's built-in `http` module, and the pages are
+plain HTML with JavaScript that calls the REST API with `fetch` and updates the DOM.
 
-## 🏗 System Architecture
+## Run it
 
-Unlike standard API CRUD apps, this engine is built to handle heavy, CPU-bound matrix mathematics without blocking the main event loop.
+Needs Docker.
 
-1. **FastAPI (The Gateway):** Receives the coordinate payload, writes a pending row to the PostGIS database, drops a message into Redis, and immediately returns a `202 Accepted` to keep the UI responsive.
-2. **Redis (The Broker):** Acts as the high-speed message broker holding the queue of ride requests.
-3. **Celery (The Muscle):** Background worker nodes pick up tasks from Redis. They dynamically download and cache localized OpenStreetMap bounding boxes, execute Dijkstra's algorithm for street snapping, and run the ML inference engine to predict ETA.
-4. **PostGIS (The Memory):** PostgreSQL with the PostGIS extension stores the resulting path as a mathematically queryable `LINESTRING` geometry. 
-5. **WebSockets:** A real-time socket connection streams simulated driver coordinates at 1Hz to the client.
+```sh
+cp .env.example .env    # optional: set APP_SECRET, DB passwords, an LLM key for AI ticket replies
+docker compose up --build
+```
 
-## 💻 Tech Stack
+Open http://localhost:3000. MySQL runs in its own container; `backend/sql/schema.sql` creates the tables on
+first start and the app seeds demo data. `docker compose down -v` resets the database.
 
-* **Frontend:** React, Vite, TailwindCSS, React-Leaflet, Uber H3-js (Spatial Hexagons)
-* **Backend:** FastAPI, Uvicorn, SQLAlchemy, GeoAlchemy2
-* **Distributed Queue:** Celery, Redis
-* **Database:** PostgreSQL + PostGIS (Hosted on Supabase)
-* **Spatial/ML Engine:** OSMnx, NetworkX, Scikit-Learn, XGBoost, Pandas
+### Demo accounts
 
-## ✨ Key Features
+| Role | Email | Password |
+|---|---|---|
+| Passenger | priya@example.com | Pass@123 |
+| Driver | ravi@example.com | Driver@123 |
+| Admin (all permissions) | admin@cabgo.in | Admin@123 |
+| Admin (trips + passengers only) | support@cabgo.in | Support@123 |
+| Super Admin | superadmin@cabgo.in | Super@123 |
 
-* **Dynamic Bounding-Box Caching:** The engine automatically calculates the Haversine distance of a trip, downloads a custom OpenStreetMap chunk with a 30% safety buffer, and caches it to disk. Future rides in that grid load in sub-seconds.
-* **Silent Failure Prevention:** Explicit type casting from C-level NumPy datatypes to native Python prevents database serialization crashes.
-* **Live Driver Streaming:** WebSockets push location updates to the client without aggressive HTTP polling.
-* **Dynamic Pricing Engine:** React calculates base fares and time multipliers natively based on exact spatial kilometers.
+The login page has one-click buttons for each.
 
-## 🚀 Local Development Setup
+### Tests
 
-**1. Clone the repository**
-```bash
-git clone [https://github.com/yourusername/uber-graph-recommender.git](https://github.com/yourusername/uber-graph-recommender.git)
-cd uber-graph-recommender
-2. Start the Message Broker (Docker Required)
+```sh
+docker compose exec app node --test   # fare unit tests + full API flow for all four roles
+```
 
-Bash
-docker run -d -p 6379:6379 redis
-3. Configure Environment Variables
-Create a .env file in the root directory and add your PostGIS database URL:
+## What it does
 
-Code snippet
-DATABASE_URL="postgresql://user:password@host:port/dbname"
-4. Start the Backend API & Worker
-Open two separate terminal windows.
+| Role | Features |
+|---|---|
+| Passenger | search rides and fares, book with a promo code, follow the trip live, cancel (fee after a driver accepts), SOS, pay (UPI/card/cash/wallet), rate the driver, trip history, receipts, support tickets |
+| Driver | go online/offline, accept or reject requests, start and complete trips, manage own vehicles, earnings after commission, ratings |
+| Admin | passengers and drivers (approve, block), vehicles, trips (start, complete, cancel, refund), support tickets, fare rules, service areas, promo codes, reports with CSV export, logs (last 7 days) |
+| Super Admin | create/update/deactivate/delete admins, assign permissions, full system logs with filters and CSV, system settings (surge, commission, maintenance mode…) |
 
-Bash
-# Terminal 1: The FastAPI Server
-pip install -r requirements.txt
-uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
+Fare = (base + per-km × km + per-minute × minutes) × surge − promo, never below the base fare.
+Distance between service areas is the straight-line distance × a road factor.
 
-# Terminal 2: The Celery Worker
-celery -A src.worker.celery_app worker --loglevel=info
-5. Start the React Frontend
-Open a third terminal window.
+## Layout
 
-Bash
-cd frontend
-npm install
-npm run dev
-🧠 Machine Learning Pipeline
-The historical EDA, feature engineering, and model training pipelines are preserved in the notebooks/ directory. The production engine uses a pre-trained joblib artifact to execute sub-second inference inside the Celery worker.
+```
+backend/                 Node.js REST API (node:http, no Express)
+  server.js              static files (../frontend) + REST API
+  src/http.js            router, JSON body parsing, input validation
+  src/auth.js            scrypt passwords, HMAC-signed tokens, roles and admin permissions, system logs
+  src/fare.js            distance and fare model
+  src/bookings.js        shared booking queries and trip state changes
+  src/routes/*.js        REST endpoints per role
+  sql/schema.sql         tables, keys and constraints
+  test/                  node:test unit and API tests
+  Dockerfile
+frontend/                plain HTML/CSS/JS pages, served by the backend
+  *.html                 one page per screen
+  css/style.css, js/     styles, fetch + DOM helpers (js/common.js)
+  figures/               animated isometric figures (taximeter, roof sign, trip route, receipt printer)
+  figures-src/           build scripts for those figures
+.github/workflows/ci.yml builds with docker compose and runs the tests
+docker-compose.yml       MySQL + the app
+```
 
-Built by Jeeva Pravin.
+`mysql2` (in `backend/package.json`) is the only npm dependency: Node has no built-in MySQL client.

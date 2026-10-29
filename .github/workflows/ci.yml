@@ -1,0 +1,17 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build --wait
+      # the app has no healthcheck, so wait for it to answer before the API test hits it
+      - run: curl -fsS --retry 30 --retry-delay 2 --retry-all-errors -o /dev/null http://localhost:3000/
+      - run: docker compose exec -T app node --test
+      - if: failure()
+        run: docker compose logs

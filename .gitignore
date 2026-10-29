@@ -1,10 +1,4 @@
-.env
-.venv
-env/
-venv/
-__pycache__/
-*.py[cod]
-cache/
-frontend/node_modules/
-frontend/dist/
+node_modules/
 .DS_Store
+frontend/figures-src/**/shots/
+.env

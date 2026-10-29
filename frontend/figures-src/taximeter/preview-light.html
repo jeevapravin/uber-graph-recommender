@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taximeter preview</title><link rel="stylesheet" href="../../figures/iso.css">
+<style>body{margin:0;background:#f2f2ef;color:#888;font:14px system-ui}main{width:min(520px,100% - 32px);margin:40px auto;display:grid;gap:32px}</style></head>
+<body><main><div id="tour"></div><div id="booked"></div></main>
+<script src="../../figures/taximeter.js"></script>
+<script>
+CabFig.taximeter.mount(document.getElementById("tour"), { theme: "light" });
+const m = CabFig.taximeter.mount(document.getElementById("booked"), { theme: "light" });
+m.set({ type: "SEDAN", km: 7.2, min: 17, base: 60, perKm: 15, perMin: 2, total: 202 });
+window.__tx = m;
+</script></body></html>

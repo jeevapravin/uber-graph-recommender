@@ -1,0 +1,6 @@
+**/node_modules
+frontend/figures-src
+**/*.md
+.git
+.github
+.env

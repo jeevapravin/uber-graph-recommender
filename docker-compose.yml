@@ -1,0 +1,45 @@
+# docker compose up --build  ->  http://localhost:3000
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    command: ["--default-time-zone=+05:30"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: cab_booking
+      MYSQL_USER: cab
+      MYSQL_PASSWORD: ${DB_PASSWORD:-cabpass}
+      TZ: Asia/Kolkata
+    volumes:
+      - db-data:/var/lib/mysql
+      - ./backend/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -ucab -p$${MYSQL_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_USER: cab
+      DB_PASSWORD: ${DB_PASSWORD:-cabpass}
+      DB_NAME: cab_booking
+      APP_SECRET: ${APP_SECRET:-change-me-in-production}
+      # optional AI ticket replies (OpenAI-compatible API); set these in a git-ignored .env file
+      LLM_URL: ${LLM_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      TZ: Asia/Kolkata
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db-data:
