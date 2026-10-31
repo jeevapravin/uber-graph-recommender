@@ -270,3 +270,34 @@ dl.kv dd { margin: 0; color: var(--strong); min-width: 0; overflow-wrap: anywher
 .fare-total span { color: var(--muted); font-size: 13.5px; text-align: right; }
 .fare-total:empty { display: none; }
 @media (max-width: 520px) { .stats { grid-template-columns: 1fr 1fr; } }
+
+/* ---- interactive leaflet map (CabMap) ---- */
+.cab-map-card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.cab-map-head { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
+.cab-map-head h3 { margin: 0; font-size: 13.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.cab-map-frame { height: 280px; width: 100%; position: relative; background: var(--surface-2); }
+@media (min-width: 901px) { .cab-map-frame.tall { height: 340px; } }
+
+.cab-map-pin-wrap, .cab-map-cab-wrap { background: none; border: none; }
+.cab-map-pin { position: relative; width: 32px; height: 32px; display: grid; place-items: center; }
+.cab-map-pin .pin-core { width: 22px; height: 22px; border-radius: 50%; color: #fff; font: 700 11px/22px var(--mono); text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.5); z-index: 2; border: 2px solid #fff; }
+.cab-map-pin .pin-ring { position: absolute; width: 32px; height: 32px; border-radius: 50%; opacity: 0.35; animation: pinPulse 2s infinite ease-out; }
+.cab-map-pin.pickup .pin-ring { background: var(--ok); }
+.cab-map-pin.drop .pin-ring { background: var(--bad); }
+
+.cab-map-cab { position: relative; width: 36px; height: 36px; display: grid; place-items: center; }
+.cab-map-cab .cab-body { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; box-shadow: 0 0 12px rgba(245, 196, 0, 0.7), 0 2px 6px rgba(0,0,0,0.6); z-index: 2; border: 2px solid #fff; }
+.cab-map-cab .cab-pulse { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: var(--accent); opacity: 0.4; animation: pinPulse 1.6s infinite ease-out; }
+
+@keyframes pinPulse {
+  0% { transform: scale(0.6); opacity: 0.8; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+
+/* Leaflet popup overrides matching CabGo theme */
+.leaflet-popup-content-wrapper { background: var(--surface) !important; color: var(--strong) !important; border: 1px solid var(--line) !important; border-radius: 8px !important; box-shadow: var(--shadow) !important; padding: 4px 6px !important; }
+.leaflet-popup-tip { background: var(--surface) !important; border: 1px solid var(--line) !important; }
+.cab-map-popup { display: grid; gap: 4px; font-size: 12px; }
+.cab-map-popup b { font-size: 13.5px; color: var(--strong); }
+.leaflet-container { font-family: var(--sans) !important; }
+

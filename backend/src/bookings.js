@@ -7,6 +7,9 @@ const { fareBreakdown } = require('./fare');
 const BOOKING_SELECT = `
   SELECT r.request_id, r.pickup_location, r.destination, r.vehicle_type, r.distance_km, r.estimated_fare,
          r.status AS request_status, r.requested_at, r.surge_multiplier, r.discount_pct,
+         r.pickup_area_id, r.drop_area_id,
+         pa.latitude AS pickup_lat, pa.longitude AS pickup_lng,
+         da.latitude AS drop_lat, da.longitude AS drop_lng,
          t.trip_id, t.trip_status, t.start_time, t.end_time, t.fare, t.fare_details,
          pu.user_id AS passenger_user_id, pu.name AS passenger_name, pu.mobile AS passenger_mobile,
          du.user_id AS driver_user_id, du.name AS driver_name, du.mobile AS driver_mobile, d.rating AS driver_rating,
@@ -16,6 +19,8 @@ const BOOKING_SELECT = `
   FROM ride_requests r
   JOIN passenger_profiles pp ON pp.passenger_id = r.passenger_id
   JOIN users pu ON pu.user_id = pp.user_id
+  LEFT JOIN service_areas pa ON pa.area_id = r.pickup_area_id
+  LEFT JOIN service_areas da ON da.area_id = r.drop_area_id
   LEFT JOIN trips t ON t.request_id = r.request_id
   LEFT JOIN driver_profiles d ON d.driver_id = t.driver_id
   LEFT JOIN users du ON du.user_id = d.user_id
