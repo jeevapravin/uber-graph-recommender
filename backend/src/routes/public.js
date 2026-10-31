@@ -3,6 +3,9 @@ const { route, v, HttpError } = require('../http');
 const { q, one, tx } = require('../db');
 const { hashPassword, verifyPassword, issueToken, log, getSettings } = require('../auth');
 const { tripEstimate, fareFor } = require('../fare');
+const crypto = require('node:crypto');
+
+const RESET_TOKEN_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 const ANY = ['PASSENGER', 'DRIVER', 'ADMIN', 'SUPER_ADMIN'];
 
@@ -102,6 +105,51 @@ route('GET', '/api/rides/search', async (ctx) => {
       drivers_available: freeBy[r.vehicle_type] || 0,
     })),
   };
+});
+
+// ---- Forgot / Reset Password ----
+
+route('POST', '/api/auth/forgot-password', async (ctx) => {
+  const email = v.email(ctx.body.email);
+  const user = await one('SELECT user_id FROM users WHERE email = ?', [email]);
+  if (user) {
+    // Invalidate any previous unused tokens for this user
+    await q('UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL', [user.user_id]);
+    // Generate a cryptographically secure token
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const ttlMinutes = RESET_TOKEN_TTL_MS / 60000;
+    await q('INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE))', [user.user_id, tokenHash, ttlMinutes]);
+    // In development: log the reset URL so the developer can use it.
+    // In production a real email service would send this link instead.
+    const resetUrl = `/forgot-password.html?token=${rawToken}`;
+    console.log(`[DEV] Password reset link for ${email}: ${resetUrl}`);
+    await log(ctx, 'PASSWORD_RESET_REQUEST', `Reset token generated for ${email}`);
+  }
+  // Always return the same response to prevent account enumeration
+  return { message: 'If that email is registered, reset instructions have been generated. Check the server console (development mode) for the reset link.' };
+});
+
+route('POST', '/api/auth/reset-password', async (ctx) => {
+  const rawToken = v.str(ctx.body.token, 'token', { min: 1, max: 200 });
+  const newPassword = v.password(ctx.body.newPassword, 'newPassword');
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+  await tx(async (c) => {
+    const row = await one('SELECT id, user_id, expires_at, used_at, (expires_at <= NOW()) AS is_expired FROM password_reset_tokens WHERE token_hash = ?', [tokenHash], c);
+    if (!row) throw new HttpError(400, 'Invalid or expired reset token');
+    if (row.used_at) throw new HttpError(400, 'This reset token has already been used');
+    if (row.is_expired) throw new HttpError(400, 'This reset token has expired');
+    // Hash new password with existing scrypt function and update user
+    await q('UPDATE users SET password = ? WHERE user_id = ?', [hashPassword(newPassword), row.user_id], c);
+    // Mark this token as used
+    await q('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = ?', [row.id], c);
+    // Invalidate any other outstanding tokens for this user
+    await q('UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL', [row.user_id], c);
+    await log({ user: { user_id: row.user_id }, ip: ctx.ip }, 'PASSWORD_RESET', 'Password reset via token');
+  });
+
+  return { message: 'Password has been reset. You can now log in with your new password.' };
 });
 
 module.exports = { ANY };

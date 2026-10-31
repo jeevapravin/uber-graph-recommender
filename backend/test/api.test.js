@@ -162,6 +162,33 @@ test('full booking flow across all four roles', { skip: !process.env.BASE_URL &&
     assert.equal((await call('GET', '/api/admin/reports', { token: a })).status, 401);
   });
 
+  await t.test('forgot-password: nonexistent email returns the same generic message', async () => {
+    const r = await call('POST', '/api/auth/forgot-password', { body: { email: 'nonexistent@nowhere.test' } });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.message.includes('reset instructions'));
+  });
+
+  await t.test('forgot-password: invalid email format is rejected', async () => {
+    const r = await call('POST', '/api/auth/forgot-password', { body: { email: 'not-an-email' } });
+    assert.equal(r.status, 400);
+  });
+
+  await t.test('reset-password: invalid token is rejected', async () => {
+    const r = await call('POST', '/api/auth/reset-password', { body: { token: 'bogus', newPassword: 'NewPass@999' } });
+    assert.equal(r.status, 400);
+    assert.ok(r.data.error.includes('Invalid'));
+  });
+
+  await t.test('reset-password: weak password is rejected', async () => {
+    const r = await call('POST', '/api/auth/reset-password', { body: { token: 'x'.repeat(64), newPassword: '12' } });
+    assert.equal(r.status, 400);
+  });
+
+  await t.test('forgot-password: existing email returns identical generic message', async () => {
+    const r = await call('POST', '/api/auth/forgot-password', { body: { email: dEmail } });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.message.includes('reset instructions'));
+  });
   await t.test('driver goes offline', async () => {
     assert.equal((await call('PUT', '/api/driver/availability', { token: d, body: { availability: 'OFFLINE' } })).data.availability, 'OFFLINE');
   });
