@@ -25,7 +25,24 @@ const PAST_TRIPS = [
   ['karthik@example.com', 'ravi@example.com', 9, 1, 1, null],
 ];
 
+async function migrate() {
+  // Idempotent migrations for existing databases. Each creates a table only if it does not exist.
+  await q(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    user_id     INT NOT NULL,
+    token_hash  CHAR(64) NOT NULL,
+    expires_at  TIMESTAMP NOT NULL,
+    used_at     TIMESTAMP NULL DEFAULT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_token_hash (token_hash),
+    INDEX idx_prt_user (user_id),
+    INDEX idx_prt_expires (expires_at),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+  )`);
+}
+
 async function seed() {
+  await migrate();
   const existing = await one('SELECT COUNT(*) AS n FROM users');
   if (existing.n > 0) return;
   console.log('Seeding demo data...');

@@ -241,6 +241,19 @@ INSERT INTO fare_rules (vehicle_type, base_fare, per_km_rate, per_minute_rate, c
   ('SEDAN', 60, 15, 2.0, 50),
   ('SUV',   90, 20, 2.5, 80);
 
+CREATE TABLE password_reset_tokens (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  user_id     INT NOT NULL,
+  token_hash  CHAR(64) NOT NULL,            -- SHA-256 hex digest of the raw token
+  expires_at  TIMESTAMP NOT NULL,
+  used_at     TIMESTAMP NULL DEFAULT NULL,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_token_hash (token_hash),
+  INDEX idx_prt_user (user_id),
+  INDEX idx_prt_expires (expires_at),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 INSERT INTO promo_codes (code, discount_pct, max_discount, valid_until, usage_limit) VALUES
   ('WELCOME50', 50, 100, DATE_ADD(CURDATE(), INTERVAL 1 YEAR), 500),
   ('RIDE10',    10, 50,  DATE_ADD(CURDATE(), INTERVAL 6 MONTH), 1000);
