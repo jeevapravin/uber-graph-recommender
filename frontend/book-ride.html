@@ -71,7 +71,10 @@
         box.replaceChildren();
         $('#fareTotal').replaceChildren();
         if (!o) {
-          if (routeMap) routeMap.clearRoute();
+          if (routeMap) {
+            routeMap.clearRoute();
+            if (picker && picker.areas) routeMap.setAreas(picker.areas);
+          }
           $('#mapEyebrow').textContent = 'Choose locations';
           return;
         }
@@ -95,6 +98,9 @@
           meter.then((m) => m.set(meterData(o, s)));
         },
       });
+      if (routeMap && picker.areas) {
+        routeMap.setAreas(picker.areas);
+      }
       $('#applyPromo').addEventListener('click', (e) =>
         CAB.act(e.currentTarget, async () => {
           const code = f.elements.promo_code.value.trim();

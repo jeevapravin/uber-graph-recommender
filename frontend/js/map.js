@@ -2,11 +2,12 @@
 (function () {
   'use strict';
 
-  // Tile layers (CartoDB tiles match the app's dark/light design system seamlessly)
+  // Free, high-performance basemap tile layers (Zero API keys required, zero watermarks)
   const TILES = {
-    dark: 'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png',
-    light: 'https://{s}.basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    dark: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    light: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; <a href="https://www.esri.com/">Esri</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   };
 
   function isDark() {
@@ -78,7 +79,17 @@
 
     // Theme tile layer
     const tileUrl = dark ? TILES.dark : TILES.light;
-    const tileLayer = L.tileLayer(tileUrl, { maxZoom: 19, subdomains: 'abcd' }).addTo(map);
+    const tileLayer = L.tileLayer(tileUrl, {
+      maxNativeZoom: 16,
+      maxZoom: 19,
+    }).addTo(map);
+
+    // Fallback to standard OpenStreetMap if Esri is unreachable
+    tileLayer.on('tileerror', function () {
+      if (tileLayer._url !== TILES.osm) {
+        tileLayer.setUrl(TILES.osm);
+      }
+    });
 
     // Listen for theme preference changes
     if (window.matchMedia) {
@@ -92,6 +103,37 @@
     let cabMarker = null;
     let routeHalo = null;
     let routeLine = null;
+    let areaMarkers = [];
+
+    function setAreas(areas, onSelect) {
+      areaMarkers.forEach((m) => map.removeLayer(m));
+      areaMarkers = [];
+      if (!Array.isArray(areas)) return;
+
+      areas.forEach((a) => {
+        if (!a.latitude || !a.longitude) return;
+        const lat = Number(a.latitude);
+        const lng = Number(a.longitude);
+        if (isNaN(lat) || isNaN(lng)) return;
+
+        const icon = L.divIcon({
+          className: 'cab-map-station-wrap',
+          html: `<div class="cab-map-station" title="${a.area_name}"><span class="dot"></span></div>`,
+          iconSize: [12, 12],
+          iconAnchor: [6, 6],
+        });
+
+        const m = L.marker([lat, lng], { icon }).addTo(map);
+        m.bindPopup(`
+          <div class="cab-map-popup">
+            <span class="badge info">SERVICE AREA</span>
+            <b>${a.area_name}</b>
+            <small class="muted">${a.city || 'Chennai'}</small>
+          </div>
+        `);
+        areaMarkers.push(m);
+      });
+    }
 
     function clearRoute() {
       if (pickupMarker) { map.removeLayer(pickupMarker); pickupMarker = null; }
@@ -200,6 +242,7 @@
 
     return {
       map,
+      setAreas,
       renderRoute,
       clearRoute,
       resize,
@@ -208,3 +251,4 @@
 
   window.CabMap = { init };
 })();
+

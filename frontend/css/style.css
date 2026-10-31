@@ -289,6 +289,11 @@ dl.kv dd { margin: 0; color: var(--strong); min-width: 0; overflow-wrap: anywher
 .cab-map-cab .cab-body { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; box-shadow: 0 0 12px rgba(245, 196, 0, 0.7), 0 2px 6px rgba(0,0,0,0.6); z-index: 2; border: 2px solid #fff; }
 .cab-map-cab .cab-pulse { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: var(--accent); opacity: 0.4; animation: pinPulse 1.6s infinite ease-out; }
 
+.cab-map-station-wrap { background: none; border: none; }
+.cab-map-station { width: 14px; height: 14px; display: grid; place-items: center; cursor: pointer; }
+.cab-map-station .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px rgba(245, 196, 0, 0.9); border: 1.5px solid #000; transition: transform .2s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.cab-map-station:hover .dot { transform: scale(1.8); }
+
 @keyframes pinPulse {
   0% { transform: scale(0.6); opacity: 0.8; }
   100% { transform: scale(1.4); opacity: 0; }
