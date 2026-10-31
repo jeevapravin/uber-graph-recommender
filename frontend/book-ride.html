@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Book a ride · CabGo</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/figures/iso.css">
 </head>
@@ -35,10 +36,21 @@
           <button class="btn primary" type="submit">Confirm booking</button>
         </form>
       </section>
-      <div id="meter" class="figure-slot" aria-label="Taximeter showing the selected estimate"></div>
+      <div class="stack">
+        <section class="card cab-map-card" id="mapCard">
+          <div class="cab-map-head">
+            <h3>Route Map</h3>
+            <span class="eyebrow" id="mapEyebrow" style="margin:0">Choose locations</span>
+          </div>
+          <div id="routeMap" class="cab-map-frame"></div>
+        </section>
+        <div id="meter" class="figure-slot" aria-label="Taximeter showing the selected estimate"></div>
+      </div>
     </div>
   </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/js/common.js"></script>
+  <script src="/js/map.js"></script>
   <script src="/js/ride-picker.js"></script>
   <script>
     (async () => {
@@ -51,21 +63,35 @@
         return setTimeout(() => (location.href = '/active-trip.html'), 800);
       }
       const meter = CAB.figure('taximeter', $('#meter'));
+      const routeMap = window.CabMap ? CabMap.init('#routeMap') : null;
       const f = $('#book');
       let promo = null;
-      const summary = (o, s) => {
+      const summary = (o, s, ctx) => {
         const box = $('#summary');
         box.replaceChildren();
         $('#fareTotal').replaceChildren();
-        if (!o) return;
+        if (!o) {
+          if (routeMap) routeMap.clearRoute();
+          $('#mapEyebrow').textContent = 'Choose locations';
+          return;
+        }
         const discount = promo ? Math.min(promo.max_discount, Math.round((o.estimated_fare * promo.discount_pct) / 100)) : 0;
         $('#fareTotal').append(h('b', {}, fmt.money(o.estimated_fare - discount)),
           h('span', {}, `${o.vehicle_type} · ${fmt.km(s.km)} · about ${s.minutes} min`, h('br'), discount ? `${promo.code} saves ${fmt.money(discount)}` : 'estimated fare'));
         box.append(h('dt', {}, 'Cancellation'), h('dd', {}, `Free until a driver accepts, then ${fmt.money(o.cancellation_fee)}`));
+
+        if (routeMap && ctx && ctx.pickupArea && ctx.dropArea) {
+          routeMap.renderRoute({
+            pickup: ctx.pickupArea,
+            drop: ctx.dropArea,
+            vehicleType: o.vehicle_type,
+          });
+          $('#mapEyebrow').textContent = `${fmt.km(s.km)} · ~${s.minutes} min`;
+        }
       };
       const picker = await ridePicker(f, {
-        onEstimate: (o, s) => {
-          summary(o, s);
+        onEstimate: (o, s, ctx) => {
+          summary(o, s, ctx);
           meter.then((m) => m.set(meterData(o, s)));
         },
       });
@@ -75,10 +101,10 @@
           if (!code) throw new Error('Type a promo code first');
           promo = await api(`/api/passenger/promo?code=${encodeURIComponent(code)}`);
           $('#promoNote').textContent = `${promo.code}: ${promo.discount_pct}% off, up to ${fmt.money(promo.max_discount)}`;
-          summary(picker.option, picker.search);
+          summary(picker.option, picker.search, picker.context);
           return { message: 'Promo applied' };
         }));
-      f.elements.promo_code.addEventListener('input', () => { promo = null; $('#promoNote').textContent = ''; summary(picker.option, picker.search); });
+      f.elements.promo_code.addEventListener('input', () => { promo = null; $('#promoNote').textContent = ''; summary(picker.option, picker.search, picker.context); });
       CAB.form(f, async (data) => {
         if (promo) data.promo_code = promo.code; else delete data.promo_code;
         const r = await api('/api/passenger/bookings', { method: 'POST', body: data });

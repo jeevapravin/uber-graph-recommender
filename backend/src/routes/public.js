@@ -64,7 +64,8 @@ route('POST', '/api/auth/logout', async (ctx) => {
 
 route('GET', '/api/auth/me', async (ctx) => ({ user: ctx.user }), { roles: ANY });
 
-route('GET', '/api/areas', async () => q("SELECT area_id, area_name, city FROM service_areas WHERE status = 'ACTIVE' ORDER BY area_name"));
+route('GET', '/api/areas', async () =>
+  q("SELECT area_id, area_name, city, state, latitude, longitude FROM service_areas WHERE status = 'ACTIVE' ORDER BY area_name"));
 
 // estimate for every active vehicle type, with how many matching drivers are free right now
 route('GET', '/api/rides/search', async (ctx) => {
