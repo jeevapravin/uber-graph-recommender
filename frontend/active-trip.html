@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Active trip · CabGo</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/figures/iso.css">
 </head>
@@ -47,18 +48,28 @@
         </section>
       </div>
       <div class="stack">
+        <section class="card cab-map-card" id="tripMapCard">
+          <div class="cab-map-head">
+            <h3>Live Route Map</h3>
+            <span class="eyebrow" id="tripMapEyebrow" style="margin:0">GPS Tracker</span>
+          </div>
+          <div id="tripMap" class="cab-map-frame tall"></div>
+        </section>
         <div id="route" class="figure-slot" aria-label="Animated city model showing where the cab is"></div>
         <div id="printer" class="figure-slot" hidden aria-label="Receipt printer showing the payment"></div>
       </div>
     </div>
   </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/js/common.js"></script>
+  <script src="/js/map.js"></script>
   <script>
     (async () => {
       const user = await CAB.page({ roles: ['PASSENGER', 'DRIVER'] });
       const { api, $, h, fmt, badge, act } = CAB;
       const isP = user.role === 'PASSENGER';
       const route = CAB.figure('trip-route', $('#route'));
+      const tripMap = window.CabMap ? CabMap.init('#tripMap') : null;
       let printer = null;
       let lastKey = '';
 
@@ -180,6 +191,15 @@
           return;
         }
         (await route).set(b.stage, { pickup: b.pickup_location, destination: b.destination });
+        if (tripMap && b.pickup_lat && b.drop_lat) {
+          tripMap.renderRoute({
+            pickup: { latitude: b.pickup_lat, longitude: b.pickup_lng, area_name: b.pickup_location },
+            drop: { latitude: b.drop_lat, longitude: b.drop_lng, area_name: b.destination },
+            vehicleType: b.vehicle_type,
+            stage: b.stage,
+          });
+          $('#tripMapEyebrow').textContent = `${b.vehicle_type} · ${b.stage}`;
+        }
         headline(b);
         details(b);
         actions(b);
