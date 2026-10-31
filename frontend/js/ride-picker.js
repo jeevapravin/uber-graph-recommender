@@ -1,8 +1,9 @@
 // Pickup/destination selects + vehicle options with live estimates (search-ride and book-ride pages).
-// ridePicker(form, { onEstimate(option, search) }) fills form.pickup_area_id, form.drop_area_id and the vehicle radios.
+// ridePicker(form, { onEstimate(option, search, context) }) fills form.pickup_area_id, form.drop_area_id and the vehicle radios.
 window.ridePicker = async function ridePicker(form, { onEstimate } = {}) {
   const { api, h, $, fmt } = CAB;
   const areas = await api('/api/areas');
+  const areaById = Object.fromEntries(areas.map((a) => [String(a.area_id), a]));
   const params = new URLSearchParams(location.search);
   for (const name of ['pickup_area_id', 'drop_area_id']) {
     const sel = form.elements[name];
@@ -14,7 +15,12 @@ window.ridePicker = async function ridePicker(form, { onEstimate } = {}) {
   let last = null;
 
   const chosen = () => last && last.options.find((o) => o.vehicle_type === (form.elements.vehicle_type && form.elements.vehicle_type.value));
-  const emit = () => onEstimate && onEstimate(chosen() || null, last);
+  const getContext = () => ({
+    pickupArea: areaById[form.elements.pickup_area_id.value] || null,
+    dropArea: areaById[form.elements.drop_area_id.value] || null,
+    allAreas: areas,
+  });
+  const emit = () => onEstimate && onEstimate(chosen() || null, last, getContext());
 
   async function refresh() {
     const from = form.elements.pickup_area_id.value;
@@ -58,7 +64,13 @@ window.ridePicker = async function ridePicker(form, { onEstimate } = {}) {
     refresh();
   });
   await refresh();
-  return { get search() { return last; }, get option() { return chosen(); }, refresh };
+  return {
+    get search() { return last; },
+    get option() { return chosen(); },
+    get context() { return getContext(); },
+    get areas() { return areas; },
+    refresh,
+  };
 };
 
 // the taximeter figure wants { total, km, min, base, perKm, perMin, type }
